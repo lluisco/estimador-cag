@@ -1,0 +1,74 @@
+from anthropic import Anthropic
+from openai import OpenAI
+
+from app.config import settings
+from app.context.examples import ESTIMATION_EXAMPLES
+
+SYSTEM_INSTRUCTIONS = """
+Eres un asistente experto en estimaciones de proyectos de software.
+Recibes un resumen de la reunión con el cliente y debes generar una estimación detallada de las tareas, el tiempo requerido, el equipo recomendado y la duración estimada del proyecto.
+
+Reglas:
+- Básate en los ejemplos proporcionados en ESTIMATION_EXAMPLES para generar tus estimaciones.
+- Desglosa el trabajo en tareas concretas con horas asignadas.
+- Si el cliente menciona funcionalidades nice to have o que acepta posponer, sepáralo en tu estimación.
+- No des una ciffra global sin un desglose.
+- No inventes requisitos que no hayan sido mencionados por el cliente.
+- Responde en español y en formato markdown.
+"""
+
+def _build_examples_block() -> str:
+    blocks = []
+    for example in ESTIMATION_EXAMPLES:
+        meeting_summary = "\n".join(f"- {line}" for line in example["meeting_summary"])
+        estimation = example["estimation"]
+        blocks.append(f"{meeting_summary}\n{estimation}")
+    return "\n\n".join(blocks)
+
+def build_system_prompt() -> str:
+    return (
+        f"{SYSTEM_INSTRUCTIONS}\n\n"
+        f"A continuación tienes estimaciones previas realizadas por la consultora. "
+        f"Úsalas como referencia de criterio y formato:\n\n"
+        f"<estimaciones_previas>\n{_build_examples_block()}\n</estimaciones_previas>"
+    )
+
+def _generate_anthropic(system_prompt: str, transcript: str) -> str:
+    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    response = client.messages.create(
+        model=settings.LLM_MODEL,
+        max_tokens=2000,
+        system=system_prompt,
+        messages=[
+            {
+                "role": "user",
+                "content": transcript
+            }
+        ]
+    )
+    return response.content[0].text
+
+def _generate_openai(system_prompt: str, transcript: str) -> str:
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    response = client.responses.create(
+        model=settings.LLM_MODEL,
+        max_output_tokens=2000,
+        instructions=system_prompt,
+        input=[
+            {
+                "role": "user",
+                "content": transcript
+            }
+        ]
+    )
+    return response.output_text
+
+def generate_estimation(transcript: str) -> str:
+    system_prompt = build_system_prompt()
+
+    if settings.LLM_PROVIDER == "anthropic":
+        return _generate_anthropic(system_prompt, transcript)
+    if settings.LLM_PROVIDER == "openai":
+        return _generate_openai(system_prompt, transcript)
+
+    raise ValueError(f"Proveedor LLM no soportado: {settings.LLM_PROVIDER}")
