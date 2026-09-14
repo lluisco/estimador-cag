@@ -11,6 +11,7 @@ class EstimationResult(NamedTuple):
     text: str
     input_tokens: int
     output_tokens: int
+    truncated: bool
 
 SYSTEM_INSTRUCTIONS = """
 Eres un asistente experto en estimaciones de proyectos de software.
@@ -58,6 +59,7 @@ def _generate_anthropic(system_prompt: str, transcript: str) -> EstimationResult
         text=response.content[0].text,
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
+        truncated=response.stop_reason == "max_tokens",
     )
 
 def _generate_openai(system_prompt: str, transcript: str) -> EstimationResult:
@@ -77,6 +79,8 @@ def _generate_openai(system_prompt: str, transcript: str) -> EstimationResult:
         text=response.output_text,
         input_tokens=response.usage.input_tokens,
         output_tokens=response.usage.output_tokens,
+        truncated=response.incomplete_details is not None
+        and response.incomplete_details.reason == "max_output_tokens",
     )
 
 def generate_estimation(transcript: str) -> EstimationResult:

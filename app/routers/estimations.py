@@ -20,6 +20,7 @@ class EstimationResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     estimated_cost_usd: float | None
+    truncated: bool
 
 @router.post("/estimate", response_model=EstimationResponse)
 async def estimate(request: EstimationRequest) -> EstimationResponse:
@@ -34,6 +35,7 @@ async def estimate(request: EstimationRequest) -> EstimationResponse:
             estimated_cost_usd=calculate_cost(
                 settings.LLM_MODEL, result.input_tokens, result.output_tokens
             ),
+            truncated=result.truncated,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
