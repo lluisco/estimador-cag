@@ -1,8 +1,16 @@
+from typing import NamedTuple
+
 from anthropic import Anthropic
 from openai import OpenAI
 
 from app.config import settings
 from app.context.examples import ESTIMATION_EXAMPLES
+
+
+class EstimationResult(NamedTuple):
+    text: str
+    input_tokens: int
+    output_tokens: int
 
 SYSTEM_INSTRUCTIONS = """
 Eres un asistente experto en estimaciones de proyectos de software.
@@ -33,7 +41,7 @@ def build_system_prompt() -> str:
         f"<estimaciones_previas>\n{_build_examples_block()}\n</estimaciones_previas>"
     )
 
-def _generate_anthropic(system_prompt: str, transcript: str) -> str:
+def _generate_anthropic(system_prompt: str, transcript: str) -> EstimationResult:
     client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
     response = client.messages.create(
         model=settings.LLM_MODEL,
@@ -46,9 +54,13 @@ def _generate_anthropic(system_prompt: str, transcript: str) -> str:
             }
         ]
     )
-    return response.content[0].text
+    return EstimationResult(
+        text=response.content[0].text,
+        input_tokens=response.usage.input_tokens,
+        output_tokens=response.usage.output_tokens,
+    )
 
-def _generate_openai(system_prompt: str, transcript: str) -> str:
+def _generate_openai(system_prompt: str, transcript: str) -> EstimationResult:
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     response = client.responses.create(
         model=settings.LLM_MODEL,
@@ -61,9 +73,13 @@ def _generate_openai(system_prompt: str, transcript: str) -> str:
             }
         ]
     )
-    return response.output_text
+    return EstimationResult(
+        text=response.output_text,
+        input_tokens=response.usage.input_tokens,
+        output_tokens=response.usage.output_tokens,
+    )
 
-def generate_estimation(transcript: str) -> str:
+def generate_estimation(transcript: str) -> EstimationResult:
     system_prompt = build_system_prompt()
 
     if settings.LLM_PROVIDER == "anthropic":
