@@ -13,6 +13,12 @@ class EstimationResult(NamedTuple):
     output_tokens: int
     truncated: bool
 
+class StreamMetadata:
+    def __init__(self):
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.truncated = False
+
 SYSTEM_INSTRUCTIONS = """
 Eres un asistente experto en estimaciones de proyectos de software.
 Recibes un resumen de la reunión con el cliente y debes generar una estimación detallada de las tareas, el tiempo requerido, el equipo recomendado y la duración estimada del proyecto.
@@ -62,6 +68,22 @@ def _generate_anthropic(system_prompt: str, transcript: str) -> EstimationResult
         truncated=response.stop_reason == "max_tokens",
     )
 
+def _generate_anthropic_stream(system_prompt: str, messages: list[dict], metadata: StreamMetadata):
+    client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+    with client.messages.stream(
+        model=settings.LLM_MODEL,
+        max_tokens=8000,
+        system=system_prompt,
+        messages=messages
+    ) as stream:
+       for text in stream.text_stream:
+           yield text
+
+    final_message = stream.get_final_message()
+    metadata.input_tokens = final_message.usage.input_tokens
+    metadata.output_tokens = final_message.usage.output_tokens
+    metadata.truncated = final_message.stop_reason == "max_tokens"
+
 def _generate_openai(system_prompt: str, transcript: str) -> EstimationResult:
     client = OpenAI(api_key=settings.OPENAI_API_KEY)
     response = client.responses.create(
@@ -83,6 +105,26 @@ def _generate_openai(system_prompt: str, transcript: str) -> EstimationResult:
         and response.incomplete_details.reason == "max_output_tokens",
     )
 
+def _generate_openai_stream(system_prompt: str, messages: list[dict], metadata: StreamMetadata):
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    with client.responses.stream(
+        model=settings.LLM_MODEL,
+        max_output_tokens=2000,
+        instructions=system_prompt,
+        input=messages
+    ) as stream:
+        for event in stream:
+            if event.type == "response.output_text.delta":
+                yield event.delta
+
+        final_response = stream.get_final_response()
+        metadata.input_tokens = final_response.usage.input_tokens
+        metadata.output_tokens = final_response.usage.output_tokens
+        metadata.truncated = (
+            final_response.incomplete_details is not None
+            and final_response.incomplete_details.reason == "max_output_tokens"
+        )
+
 def generate_estimation(transcript: str) -> EstimationResult:
     system_prompt = build_system_prompt()
 
@@ -92,3 +134,13 @@ def generate_estimation(transcript: str) -> EstimationResult:
         return _generate_openai(system_prompt, transcript)
 
     raise ValueError(f"Proveedor LLM no soportado: {settings.LLM_PROVIDER}")
+
+def generate_estimation_stream(messages: list[dict], metadata: StreamMetadata):
+    system_prompt = build_system_prompt()
+
+    if settings.LLM_PROVIDER == "anthropic":
+        return _generate_anthropic_stream(system_prompt, messages, metadata)
+    if settings.LLM_PROVIDER == "openai":
+        return _generate_openai_stream(system_prompt, messages, metadata)
+
+    raise ValueError(f"Proveedor LLM no soportado para streaming: {settings.LLM_PROVIDER}")

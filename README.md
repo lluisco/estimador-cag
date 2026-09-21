@@ -13,6 +13,12 @@ Flujo del servicio:
 transcripción → inyección de contexto (ejemplos previos) → llamada al LLM → estimación
 ```
 
+Tiene dos interfaces sobre la misma lógica de negocio (`app/services/llm_service.py`):
+
+- **API REST** (`app/main.py`): endpoint de un solo turno pensado para integraciones.
+- **Chat web con Streamlit** (`streamlit_app.py`): interfaz conversacional con
+  streaming e historial, pensada para uso interactivo desde el navegador.
+
 ## Estructura del proyecto
 
 ```
@@ -25,7 +31,8 @@ app/
 ├── routers/
 │   └── estimations.py         # Endpoint POST /api/v1/estimate
 └── services/
-    └── llm_service.py         # Construcción del prompt y llamada al LLM
+    └── llm_service.py         # Construcción del prompt y llamada al LLM (bloqueante y streaming)
+streamlit_app.py                # Interfaz de chat (Streamlit) sobre app/services/llm_service.py
 docs/
 └── transcripcion_ejemplo.md   # Transcripción de ejemplo para probar el servicio
 tests/
@@ -103,6 +110,38 @@ Respuesta de ejemplo:
   "truncated": false
 }
 ```
+
+## Interfaz de chat (Streamlit)
+
+Además de la API REST, el proyecto incluye una interfaz conversacional web
+para pegar transcripciones y ver la estimación generarse en streaming, sin
+necesidad de `curl` ni Swagger.
+
+```bash
+uv run streamlit run streamlit_app.py
+```
+
+Se abre en `http://localhost:8501`. Pega el texto de
+[`docs/transcripcion_ejemplo.md`](docs/transcripcion_ejemplo.md) (o tu
+propia transcripción) en el cuadro de chat inferior.
+
+Características:
+
+- **Chat con historial**: cada pregunta se envía junto con toda la
+  conversación anterior (`st.session_state`), así que puedes pedir ajustes
+  sobre una estimación ya generada ("ponlo en formato tabla", "aumenta un
+  10% el trabajo"...) y el modelo mantiene el contexto. El historial vive
+  solo en la sesión del navegador: se pierde al recargar la página.
+- **Streaming real**: la respuesta se muestra token a token a medida que
+  llega del proveedor (Anthropic/OpenAI), usando `st.write_stream` sobre un
+  generador (`generate_estimation_stream` en `llm_service.py`).
+- **Mismo system prompt que la API**: reutiliza `build_system_prompt()`, por
+  lo que el criterio y los ejemplos de referencia (CAG) son idénticos a los
+  del endpoint `/api/v1/estimate`.
+- **Panel lateral**: muestra las métricas de la última llamada (modelo,
+  tokens de entrada/salida, si la respuesta se truncó, tiempo de respuesta).
+- **API key no hardcodeada**: se lee de `.env` a través de `app.config.settings`,
+  igual que en la API REST.
 
 ## Validación y pipeline automático
 
