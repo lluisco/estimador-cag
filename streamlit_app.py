@@ -1,9 +1,35 @@
-import streamlit as st
+import json
 import time
 
-from app.config import settings
-from app.context.examples import ESTIMATION_EXAMPLES
-from app.services.llm_service import build_system_prompt, generate_estimation, generate_estimation_stream, StreamMetadata
+import httpx
+import streamlit as st
+
+API_BASE_URL = "http://localhost:8000/api/v1"
+
+try:
+    context = httpx.get(f"{API_BASE_URL}/context", timeout=10.0).json()
+except httpx.ConnectError:
+    st.sidebar.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
+    context = None
+
+
+def stream_estimation(messages: list[dict], metrics_holder: dict):
+    payload = {"messages": messages}
+    with httpx.stream(
+        "POST", f"{API_BASE_URL}/estimate/stream", json=payload, timeout=120.0
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines():
+            if not line:
+                continue
+            event = json.loads(line)
+            if event["type"] == "delta":
+                yield event["text"]
+            elif event["type"] == "metadata":
+                metrics_holder.update(event)
+            elif event["type"] == "error":
+                raise RuntimeError(event["detail"])
+
 
 st.title("Estimador CAG")
 
@@ -22,12 +48,15 @@ if prompt:
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        metadata = StreamMetadata()
+        metrics_holder = {}
         start_time = time.time()
         try:
             full_response = st.write_stream(
-                generate_estimation_stream(st.session_state.messages, metadata)
+                stream_estimation(st.session_state.messages, metrics_holder)
             )
+        except httpx.ConnectError:
+            st.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
+            st.stop()
         except Exception as e:
             st.error(f"Error al generar la estimación: {e}")
             st.stop()
@@ -35,30 +64,31 @@ if prompt:
 
     st.session_state.messages.append({"role": "assistant", "content": full_response})
     st.session_state.last_call_metrics = {
-        "model": settings.LLM_MODEL,
-        "input_tokens": metadata.input_tokens,
-        "output_tokens": metadata.output_tokens,
-        "truncated": metadata.truncated,
+        "model": metrics_holder.get("model", "desconocido"),
+        "input_tokens": metrics_holder.get("input_tokens", 0),
+        "output_tokens": metrics_holder.get("output_tokens", 0),
+        "truncated": metrics_holder.get("truncated", False),
         "elapsed_time": elapsed_time,
     }
 
 with st.sidebar:
     st.header("Contexto CAG")
 
-    with st.expander("System prompt activo"):
-        st.text_area(
-            "prompt enviado al modelo",
-            value=build_system_prompt(),
-            height=200,
-            disabled=True,
-        )
+    if context:
+        with st.expander("System prompt activo"):
+            st.text_area(
+                "Prompt enviado al modelo",
+                value=context["system_prompt"],
+                height=200,
+                disabled=True,
+            )
 
-    with st.expander("Ejemplos inyectados (CAG)"):
-        for i, example in enumerate(ESTIMATION_EXAMPLES, start=1):
-            st.markdown(f"**Ejemplo {i}**")
-            st.markdown("\n".join(f"- {line}" for line in example["meeting_summary"]))
-            st.markdown(example["estimation"])
-            st.divider()
+        with st.expander("Ejemplos inyectados (CAG)"):
+            for i, example in enumerate(context["examples"], start=1):
+                st.markdown(f"**Ejemplo {i}**")
+                st.markdown("\n".join(f"- {line}" for line in example["meeting_summary"]))
+                st.markdown(example["estimation"])
+                st.divider()
 
     st.header("Última llamada al LLM")
 
