@@ -27,6 +27,7 @@ def test_estimate_endpoint_full_flow():
         truncated=False,
         model="gpt-4o-mini",
         provider="openai",
+        cache_hit=True,
     )
 
     with patch(
@@ -47,6 +48,7 @@ def test_estimate_endpoint_full_flow():
     assert body["truncated"] is False
     assert body["model"] == "gpt-4o-mini"
     assert body["provider"] == "openai"
+    assert body["cache_hit"] is True
 
 
 def test_estimate_endpoint_requires_transcript():

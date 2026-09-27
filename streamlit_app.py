@@ -68,6 +68,7 @@ if prompt:
         "input_tokens": metrics_holder.get("input_tokens", 0),
         "output_tokens": metrics_holder.get("output_tokens", 0),
         "truncated": metrics_holder.get("truncated", False),
+        "cache_hit": metrics_holder.get("cache_hit", False),
         "elapsed_time": elapsed_time,
     }
 
@@ -98,4 +99,5 @@ with st.sidebar:
         st.write(f"Tokens de entrada: {metrics['input_tokens']}")
         st.write(f"Tokens de salida: {metrics['output_tokens']}")
         st.write(f"Truncado: {metrics['truncated']}")
+        st.write(f"Servido desde cache: {metrics['cache_hit']}")
         st.write(f"Tiempo transcurrido: {metrics['elapsed_time']:.2f} segundos")

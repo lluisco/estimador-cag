@@ -25,6 +25,7 @@ class EstimationResponse(BaseModel):
     output_tokens: int
     estimated_cost_usd: float | None
     truncated: bool
+    cache_hit: bool
 
 class Message(BaseModel):
     role: str
@@ -60,6 +61,7 @@ async def estimate(request: EstimationRequest) -> EstimationResponse:
                 result.model, result.input_tokens, result.output_tokens
             ),
             truncated=result.truncated,
+            cache_hit=result.cache_hit,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -99,6 +101,7 @@ def estimate_stream(request: ChatEstimationRequest):
             "input_tokens": metadata.input_tokens,
             "output_tokens": metadata.output_tokens,
             "truncated": metadata.truncated,
+            "cache_hit": metadata.cache_hit,
         }) + "\n"
 
     return StreamingResponse(event_generator(), media_type="application/x-ndjson")
