@@ -25,6 +25,8 @@ def test_estimate_endpoint_full_flow():
         input_tokens=100,
         output_tokens=50,
         truncated=False,
+        model="gpt-4o-mini",
+        provider="openai",
     )
 
     with patch(
@@ -43,8 +45,8 @@ def test_estimate_endpoint_full_flow():
     assert body["input_tokens"] == 100
     assert body["output_tokens"] == 50
     assert body["truncated"] is False
-    assert "model" in body
-    assert "provider" in body
+    assert body["model"] == "gpt-4o-mini"
+    assert body["provider"] == "openai"
 
 
 def test_estimate_endpoint_requires_transcript():

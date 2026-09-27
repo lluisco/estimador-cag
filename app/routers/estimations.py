@@ -43,8 +43,8 @@ class ExampleResponse(BaseModel):
 class ContextResponse(BaseModel):
     system_prompt: str
     examples: list[ExampleResponse]
-    model: str
-    provider: str
+    primary_model: str
+    fallback_model: str
 
 @router.post("/estimate", response_model=EstimationResponse)
 async def estimate(request: EstimationRequest) -> EstimationResponse:
@@ -52,12 +52,12 @@ async def estimate(request: EstimationRequest) -> EstimationResponse:
         result = generate_estimation(request.transcript)
         return EstimationResponse(
             estimation=result.text,
-            model=settings.LLM_MODEL,
-            provider=settings.LLM_PROVIDER,
+            model=result.model,
+            provider=result.provider,
             input_tokens=result.input_tokens,
             output_tokens=result.output_tokens,
             estimated_cost_usd=calculate_cost(
-                settings.LLM_MODEL, result.input_tokens, result.output_tokens
+                result.model, result.input_tokens, result.output_tokens
             ),
             truncated=result.truncated,
         )
@@ -75,8 +75,8 @@ def get_context() -> ContextResponse:
             )
             for example in ESTIMATION_EXAMPLES
         ],
-        model=settings.LLM_MODEL,
-        provider=settings.LLM_PROVIDER,
+        primary_model=settings.PRIMARY_MODEL,
+        fallback_model=settings.FALLBACK_MODEL,
     )
 
 @router.post("/estimate/stream")
@@ -94,7 +94,8 @@ def estimate_stream(request: ChatEstimationRequest):
 
         yield json.dumps({
             "type": "metadata",
-            "model": settings.LLM_MODEL,
+            "model": metadata.model,
+            "provider": metadata.provider,
             "input_tokens": metadata.input_tokens,
             "output_tokens": metadata.output_tokens,
             "truncated": metadata.truncated,

@@ -22,6 +22,6 @@ app.include_router(estimations.router, prefix="/api/v1")
 def health():
     return {
         "status": "ok",
-        "provider": settings.LLM_PROVIDER,
-        "model": settings.LLM_MODEL,
+        "primary_model": settings.PRIMARY_MODEL,
+        "fallback_model": settings.FALLBACK_MODEL,
     }

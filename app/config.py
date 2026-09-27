@@ -8,8 +8,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    LLM_PROVIDER: str = "openai"
-    LLM_MODEL: str = "claude-haiku-4-5"
+    PRIMARY_MODEL: str = "openai/gpt-4o-mini"
+    FALLBACK_MODEL: str = "anthropic/claude-haiku-4-5-20251001"
+    LLM_TIMEOUT_SECONDS: int = 30
+    LLM_NUM_RETRIES: int = 1
 
     ANTHROPIC_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
