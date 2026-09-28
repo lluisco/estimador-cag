@@ -19,5 +19,8 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     CACHE_TTL_SECONDS: int = 86400  # 24h
 
+    APP_ENV: str = "development"
+    LOG_LEVEL: str = "info"
+
 
 settings = Settings()

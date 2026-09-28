@@ -1,10 +1,10 @@
 import hashlib
 import json
-import logging
 
 import redis
+import structlog
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 
 class EstimationCache:
@@ -34,13 +34,13 @@ class EstimationCache:
     def get(self, key: str) -> dict | None:
         try:
             raw = self._client.get(key)
-        except redis.RedisError:
-            log.warning("cache_get_failed key=%s", key)
+        except redis.RedisError as exc:
+            log.warning("cache_get_failed", key=key, error=str(exc)[:200])
             return None
         return json.loads(raw) if raw else None
 
     def set(self, key: str, value: dict) -> None:
         try:
             self._client.set(key, json.dumps(value), ex=self.ttl_seconds)
-        except redis.RedisError:
-            log.warning("cache_set_failed key=%s", key)
+        except redis.RedisError as exc:
+            log.warning("cache_set_failed", key=key, error=str(exc)[:200])

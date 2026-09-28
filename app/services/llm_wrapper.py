@@ -1,11 +1,11 @@
-import logging
 from dataclasses import dataclass
 from typing import Iterator
 import time
 
+import structlog
 from litellm import Router
 
-log = logging.getLogger(__name__)
+log = structlog.get_logger()
 
 def _strip_provider_prefix(model: str) -> str:
     return model.split("/", 1)[1] if "/" in model else model
@@ -77,6 +77,7 @@ class LLMWrapper:
             {"role": "user", "content": user_message},
         ]
 
+        log.info("llm_call_started", model=self.primary_model)
         t0 = time.perf_counter()
         try:
             response = self.router.completion(
@@ -84,8 +85,14 @@ class LLMWrapper:
                 messages=messages,
                 max_tokens=max_tokens,
             )
-        except Exception:
-            log.error("llm_call_failed", extra={"primary_model": self.primary_model})
+        except Exception as exc:
+            latency_ms = int((time.perf_counter() - t0) * 1000)
+            log.error(
+                "llm_call_failed",
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+                latency_ms=latency_ms,
+            )
             raise
         latency_ms = int((time.perf_counter() - t0) * 1000)
 
@@ -96,8 +103,13 @@ class LLMWrapper:
         model = _strip_provider_prefix(raw_model)
 
         log.info(
-            "llm_call_completed model=%s provider=%s latency_ms=%d",
-            model, provider, latency_ms,
+            "llm_call_completed",
+            model=model,
+            provider=provider,
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
+            latency_ms=latency_ms,
+            finish_reason=(choice.finish_reason or "stop").lower(),
         )
 
         return LLMResponse(
@@ -115,6 +127,8 @@ class LLMWrapper:
     ) -> Iterator[str]:
         full_messages = [{"role": "system", "content": system_prompt}, *messages]
 
+        log.info("llm_stream_started", model=self.primary_model)
+        t0 = time.perf_counter()
         try:
             response = self.router.completion(
                 model=self.MODEL_GROUP,
@@ -123,8 +137,12 @@ class LLMWrapper:
                 stream=True,
                 stream_options={"include_usage": True},
             )
-        except Exception:
-            log.error("llm_stream_failed_to_start")
+        except Exception as exc:
+            log.error(
+                "llm_stream_failed_to_start",
+                error_type=type(exc).__name__,
+                error=str(exc)[:200],
+            )
             raise
 
         model = None
@@ -147,3 +165,13 @@ class LLMWrapper:
         metadata.truncated = finish_reason == "length"
         metadata.input_tokens = usage.prompt_tokens if usage else 0
         metadata.output_tokens = usage.completion_tokens if usage else 0
+
+        log.info(
+            "llm_stream_completed",
+            model=metadata.model,
+            provider=metadata.provider,
+            input_tokens=metadata.input_tokens,
+            output_tokens=metadata.output_tokens,
+            latency_ms=int((time.perf_counter() - t0) * 1000),
+            truncated=metadata.truncated,
+        )
