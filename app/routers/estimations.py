@@ -4,18 +4,13 @@ from pydantic import BaseModel, Field
 from app.config import settings
 from app.context.examples import ESTIMATION_EXAMPLES
 from app.pricing import calculate_cost
+from app.schemas import EstimationRequest
 from app.services.llm_service import StreamMetadata, build_system_prompt, generate_estimation, generate_estimation_stream
 
 import json
 from fastapi.responses import StreamingResponse
 
 router = APIRouter(tags=["estimations"])
-
-class EstimationRequest(BaseModel):
-    transcript: str = Field(
-        ..., 
-        description="Resumen de la reunión con el cliente",
-    )
 
 class EstimationResponse(BaseModel):
     estimation: str
@@ -50,7 +45,7 @@ class ContextResponse(BaseModel):
 @router.post("/estimate", response_model=EstimationResponse)
 async def estimate(request: EstimationRequest) -> EstimationResponse:
     try:
-        result = generate_estimation(request.transcript)
+        result = generate_estimation(request.description)
         return EstimationResponse(
             estimation=result.text,
             model=result.model,

@@ -1,10 +1,28 @@
-import json
-import time
-
 import httpx
 import streamlit as st
 
+from app.schemas import DetailLevel, EstimationRequest, OutputFormat, ProjectType
+
 API_BASE_URL = "http://localhost:8000/api/v1"
+
+PROJECT_TYPE_LABELS = {
+    ProjectType.MOBILE_APP: "Aplicación móvil",
+    ProjectType.WEB_SAAS: "Web / SaaS",
+    ProjectType.INTERNAL_TOOL: "Herramienta interna",
+    ProjectType.DATA_PIPELINE: "Pipeline de datos",
+}
+
+DETAIL_LEVEL_LABELS = {
+    DetailLevel.SUMMARY: "Resumen",
+    DetailLevel.MEDIUM: "Medio",
+    DetailLevel.DETAILED: "Detallado",
+}
+
+OUTPUT_FORMAT_LABELS = {
+    OutputFormat.PHASES_TABLE: "Tabla de fases",
+    OutputFormat.LINE_ITEMS: "Partidas (line items)",
+    OutputFormat.NARRATIVE: "Narrativo",
+}
 
 try:
     context = httpx.get(f"{API_BASE_URL}/context", timeout=10.0).json()
@@ -13,63 +31,67 @@ except httpx.ConnectError:
     context = None
 
 
-def stream_estimation(messages: list[dict], metrics_holder: dict):
-    payload = {"messages": messages}
-    with httpx.stream(
-        "POST", f"{API_BASE_URL}/estimate/stream", json=payload, timeout=120.0
-    ) as response:
-        response.raise_for_status()
-        for line in response.iter_lines():
-            if not line:
-                continue
-            event = json.loads(line)
-            if event["type"] == "delta":
-                yield event["text"]
-            elif event["type"] == "metadata":
-                metrics_holder.update(event)
-            elif event["type"] == "error":
-                raise RuntimeError(event["detail"])
+def request_estimation(request: EstimationRequest) -> dict:
+    response = httpx.post(
+        f"{API_BASE_URL}/estimate", json=request.model_dump(mode="json"), timeout=120.0
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 st.title("Estimador CAG")
 
-if "messages" not in st.session_state:
-    st.session_state["messages"] = []
+with st.form("estimation_form"):
+    description = st.text_area(
+        "Descripción del proyecto",
+        placeholder="Resume la reunión con el cliente: qué necesita, alcance, restricciones...",
+        height=200,
+    )
+    project_type = st.selectbox(
+        "Tipo de proyecto",
+        options=list(ProjectType),
+        format_func=lambda pt: PROJECT_TYPE_LABELS[pt],
+    )
+    detail_level = st.selectbox(
+        "Nivel de detalle",
+        options=list(DetailLevel),
+        format_func=lambda dl: DETAIL_LEVEL_LABELS[dl],
+    )
+    output_format = st.selectbox(
+        "Formato de salida",
+        options=list(OutputFormat),
+        format_func=lambda of: OUTPUT_FORMAT_LABELS[of],
+    )
+    submitted = st.form_submit_button("Generar estimación")
 
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+if submitted:
+    try:
+        request = EstimationRequest(
+            description=description,
+            project_type=project_type,
+            detail_level=detail_level,
+            output_format=output_format,
+        )
+    except ValueError as e:
+        st.error(f"Datos del formulario inválidos: {e}")
+        st.stop()
 
-prompt = st.chat_input("Pega aquí la transcripción de la reunión...")
+    try:
+        result = request_estimation(request)
+    except httpx.ConnectError:
+        st.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
+        st.stop()
+    except httpx.HTTPStatusError as e:
+        st.error(f"Error al generar la estimación: {e.response.text}")
+        st.stop()
 
-if prompt:
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        metrics_holder = {}
-        start_time = time.time()
-        try:
-            full_response = st.write_stream(
-                stream_estimation(st.session_state.messages, metrics_holder)
-            )
-        except httpx.ConnectError:
-            st.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
-            st.stop()
-        except Exception as e:
-            st.error(f"Error al generar la estimación: {e}")
-            st.stop()
-        elapsed_time = time.time() - start_time
-
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+    st.markdown(result["estimation"])
     st.session_state.last_call_metrics = {
-        "model": metrics_holder.get("model", "desconocido"),
-        "input_tokens": metrics_holder.get("input_tokens", 0),
-        "output_tokens": metrics_holder.get("output_tokens", 0),
-        "truncated": metrics_holder.get("truncated", False),
-        "cache_hit": metrics_holder.get("cache_hit", False),
-        "elapsed_time": elapsed_time,
+        "model": result.get("model", "desconocido"),
+        "input_tokens": result.get("input_tokens", 0),
+        "output_tokens": result.get("output_tokens", 0),
+        "truncated": result.get("truncated", False),
+        "cache_hit": result.get("cache_hit", False),
     }
 
 with st.sidebar:
@@ -100,4 +122,3 @@ with st.sidebar:
         st.write(f"Tokens de salida: {metrics['output_tokens']}")
         st.write(f"Truncado: {metrics['truncated']}")
         st.write(f"Servido desde cache: {metrics['cache_hit']}")
-        st.write(f"Tiempo transcurrido: {metrics['elapsed_time']:.2f} segundos")

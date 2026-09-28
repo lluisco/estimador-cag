@@ -35,7 +35,12 @@ def test_estimate_endpoint_full_flow():
     ) as mocked:
         response = client.post(
             "/api/v1/estimate",
-            json={"transcript": "El cliente necesita una web de reservas online."},
+            json={
+                "description": "El cliente necesita una web de reservas online.",
+                "project_type": "web_saas",
+                "detail_level": "medium",
+                "output_format": "narrative",
+            },
         )
 
     assert mocked.called
@@ -51,7 +56,7 @@ def test_estimate_endpoint_full_flow():
     assert body["cache_hit"] is True
 
 
-def test_estimate_endpoint_requires_transcript():
+def test_estimate_endpoint_requires_description():
     response = client.post("/api/v1/estimate", json={})
     assert response.status_code == 422
 
@@ -62,7 +67,13 @@ def test_estimate_endpoint_handles_llm_errors():
         side_effect=RuntimeError("fallo simulado del proveedor LLM"),
     ):
         response = client.post(
-            "/api/v1/estimate", json={"transcript": "Reunión de ejemplo."}
+            "/api/v1/estimate",
+            json={
+                "description": "Reunión de ejemplo con el cliente.",
+                "project_type": "internal_tool",
+                "detail_level": "summary",
+                "output_format": "line_items",
+            },
         )
 
     assert response.status_code == 500
