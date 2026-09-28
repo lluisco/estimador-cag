@@ -32,3 +32,9 @@ class EstimationRequest(BaseModel):
 class EstimationResponse(BaseModel):
     text: str
     prompt_version: str
+    system_prompt: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    truncated: bool
+    cache_hit: bool

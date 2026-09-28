@@ -85,33 +85,28 @@ if submitted:
         st.error(f"Error al generar la estimación: {e.response.text}")
         st.stop()
 
-    st.markdown(result["estimation"])
+    st.markdown(result["text"])
     st.session_state.last_call_metrics = {
         "model": result.get("model", "desconocido"),
         "input_tokens": result.get("input_tokens", 0),
         "output_tokens": result.get("output_tokens", 0),
         "truncated": result.get("truncated", False),
         "cache_hit": result.get("cache_hit", False),
+        "prompt_version": result.get("prompt_version", "unknown"),
+        "system_prompt": result.get("system_prompt", ""),
     }
 
 with st.sidebar:
     st.header("Contexto CAG")
 
-    if context:
-        with st.expander("System prompt activo"):
+    if "last_call_metrics" in st.session_state:
+        with st.expander("System prompt del último envío"):
             st.text_area(
                 "Prompt enviado al modelo",
-                value=context["system_prompt"],
+                value=st.session_state.last_call_metrics.get("system_prompt", ""),
                 height=200,
                 disabled=True,
             )
-
-        with st.expander("Ejemplos inyectados (CAG)"):
-            for i, example in enumerate(context["examples"], start=1):
-                st.markdown(f"**Ejemplo {i}**")
-                st.markdown("\n".join(f"- {line}" for line in example["meeting_summary"]))
-                st.markdown(example["estimation"])
-                st.divider()
 
     st.header("Última llamada al LLM")
 
@@ -122,3 +117,4 @@ with st.sidebar:
         st.write(f"Tokens de salida: {metrics['output_tokens']}")
         st.write(f"Truncado: {metrics['truncated']}")
         st.write(f"Servido desde cache: {metrics['cache_hit']}")
+        st.write(f"Versión del prompt: {metrics['prompt_version']}")

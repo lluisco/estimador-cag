@@ -70,17 +70,16 @@ def build_system_prompt() -> str:
         f"<estimaciones_previas>\n{_build_examples_block()}\n</estimaciones_previas>"
     )
 
-def generate_estimation(transcript: str) -> EstimationResult:
-    system_prompt = build_system_prompt()
+def generate_estimation(system_prompt: str, user_prompt: str) -> EstimationResult:
     cache_key = EstimationCache.make_key(
-        system_prompt=system_prompt, user_message=transcript, model=settings.PRIMARY_MODEL, max_tokens=2000
+        system_prompt=system_prompt, user_message=user_prompt, model=settings.PRIMARY_MODEL, max_tokens=2000
     )
 
     cached = _cache.get(cache_key)
     if cached:
         return EstimationResult(**cached)._replace(cache_hit=True)
 
-    response = _wrapper.complete(system_prompt=system_prompt, user_message=transcript, max_tokens=2000)
+    response = _wrapper.complete(system_prompt=system_prompt, user_message=user_prompt, max_tokens=2000)
     result = EstimationResult(
         text=response.text,
         input_tokens=response.input_tokens,

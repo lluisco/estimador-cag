@@ -47,12 +47,13 @@ def test_estimate_endpoint_full_flow():
     assert response.status_code == 200
 
     body = response.json()
-    assert body["estimation"] == fake_result.text
+    assert body["text"] == fake_result.text
+    assert body["prompt_version"] == "v1"
+    assert body["system_prompt"]
     assert body["input_tokens"] == 100
     assert body["output_tokens"] == 50
     assert body["truncated"] is False
     assert body["model"] == "gpt-4o-mini"
-    assert body["provider"] == "openai"
     assert body["cache_hit"] is True
 
 
