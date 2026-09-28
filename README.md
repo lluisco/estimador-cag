@@ -1,23 +1,28 @@
 # Estimador CAG
 
-Servicio que genera estimaciones de proyectos de software a partir de la
-transcripción de una reunión con el cliente, usando un LLM (Anthropic Claude
-u OpenAI) y arquitectura **CAG (Cache-Augmented Generation)**: las
-estimaciones históricas de referencia se inyectan directamente en el prompt
-del sistema (`app/context/examples.py`), sirviendo como ejemplos de criterio
-y formato para el modelo.
+Servicio que genera estimaciones de proyectos de software a partir de una
+descripción del proyecto (tipo, nivel de detalle y formato de salida
+deseados), usando un LLM (Anthropic Claude u OpenAI, con fallback automático
+entre ambos vía `litellm`) y arquitectura **CAG (Cache-Augmented
+Generation)**: estimaciones históricas de referencia se inyectan como
+ejemplos few-shot directamente en el prompt del sistema.
 
 Flujo del servicio:
 
 ```
-transcripción → inyección de contexto (ejemplos previos) → llamada al LLM → estimación
+formulario (descripción + tipo + detalle + formato)
+  → render de templates Jinja (system + user)
+  → llamada al LLM (con cache exact-match)
+  → estimación
 ```
 
-Tiene dos interfaces sobre la misma lógica de negocio (`app/services/llm_service.py`):
+Tiene dos interfaces sobre la misma lógica de negocio
+(`app/services/llm_service.py`):
 
 - **API REST** (`app/main.py`): endpoint de un solo turno pensado para integraciones.
-- **Chat web con Streamlit** (`streamlit_app.py`): interfaz conversacional con
-  streaming e historial, pensada para uso interactivo desde el navegador.
+- **Formulario web con Streamlit** (`streamlit_app.py`): formulario tipado
+  (reutiliza los mismos schemas Pydantic que la API) para generar una
+  estimación y ver el detalle de la última llamada.
 
 ## Estructura del proyecto
 
@@ -25,19 +30,31 @@ Tiene dos interfaces sobre la misma lógica de negocio (`app/services/llm_servic
 app/
 ├── main.py                    # App FastAPI y endpoint /health
 ├── config.py                  # Configuración (variables de entorno)
+├── schemas.py                 # Contrato tipado (EstimationRequest/Response, enums)
 ├── pricing.py                 # Cálculo de coste estimado por llamada
 ├── context/
-│   └── examples.py            # Ejemplos históricos usados como contexto (CAG)
+│   └── examples.py            # Ejemplos históricos usados en los templates (CAG)
+├── prompts/
+│   ├── loader.py               # render_estimation_prompt(request, version) vía Jinja2
+│   └── estimation/v1/
+│       ├── system.j2           # Rol, reglas y bloques condicionales (formato/detalle)
+│       ├── user.j2              # Wrapper de la descripción del proyecto
+│       └── examples.j2          # Ejemplos few-shot incluidos en system.j2
 ├── routers/
 │   └── estimations.py         # Endpoint POST /api/v1/estimate
 └── services/
-    └── llm_service.py         # Construcción del prompt y llamada al LLM (bloqueante y streaming)
-streamlit_app.py                # Interfaz de chat (Streamlit) sobre app/services/llm_service.py
+    ├── llm_service.py         # Orquesta cache + llamada al LLM
+    ├── llm_wrapper.py         # Wrapper sobre litellm.Router (primario + fallback)
+    └── cache.py                # Cache exact-match en Redis (degrada sin bloquear si no hay Redis)
+streamlit_app.py                # Formulario web (Streamlit) sobre la API
 docs/
-└── transcripcion_ejemplo.md   # Transcripción de ejemplo para probar el servicio
+└── transcripcion_ejemplo.md   # Transcripción de ejemplo para inspirar una descripción
 tests/
 ├── test_structure.py          # Valida que la estructura de carpetas es correcta
-└── test_api.py                # Valida el flujo completo (mockeando el LLM)
+├── test_api.py                # Valida el flujo completo del endpoint (mockeando el LLM)
+├── test_cache.py              # Valida el degradado ante fallos de Redis
+└── prompts/
+    └── test_estimation_v1.py  # Valida el render de los templates (sin LLM, milisegundos)
 .github/workflows/ci.yml       # Pipeline que ejecuta los tests automáticamente
 ```
 
@@ -45,23 +62,24 @@ tests/
 
 - Python >= 3.11
 - [uv](https://docs.astral.sh/uv/) como gestor de dependencias
+- Redis, opcional: si no está disponible, el cache falla en silencio y el
+  servicio sigue funcionando sin cachear (ver `app/services/cache.py`)
 
 ## Configuración
 
-1. Copia `.env.example` a `.env` y rellena las claves necesarias:
+1. Copia `.env.example` a `.env` y rellena al menos las API keys:
 
    ```bash
    cp .env.example .env
    ```
 
-   Variables disponibles:
+   Variables principales (ver `.env.example` para el resto):
 
-   | Variable            | Descripción                                      |
-   |---------------------|---------------------------------------------------|
-   | `LLM_PROVIDER`      | `anthropic` u `openai`                             |
-   | `LLM_MODEL`         | Nombre del modelo a usar                           |
-   | `ANTHROPIC_API_KEY` | API key de Anthropic (si `LLM_PROVIDER=anthropic`) |
-   | `OPENAI_API_KEY`    | API key de OpenAI (si `LLM_PROVIDER=openai`)       |
+   | Variable                         | Descripción                                  |
+   |-----------------------------------|-----------------------------------------------|
+   | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Credenciales del/los proveedor/es LLM   |
+   | `PRIMARY_MODEL` / `FALLBACK_MODEL`     | Modelos usados por `litellm.Router`     |
+   | `REDIS_URL`                       | Cache exact-match; opcional en local          |
 
 2. Instala las dependencias:
 
@@ -88,72 +106,72 @@ curl http://localhost:8000/health
 
 ### Generar una estimación
 
-Usa el texto de [`docs/transcripcion_ejemplo.md`](docs/transcripcion_ejemplo.md)
-como referencia de entrada, o el tuyo propio:
-
 ```bash
 curl -X POST http://localhost:8000/api/v1/estimate \
   -H "Content-Type: application/json" \
-  -d '{"transcript": "El cliente necesita una plataforma web de reservas de aulas para una academia de idiomas con tres sedes..."}'
+  -d '{
+    "description": "El cliente necesita una plataforma web de reservas de aulas para una academia de idiomas con tres sedes.",
+    "project_type": "web_saas",
+    "detail_level": "medium",
+    "output_format": "phases_table"
+  }'
 ```
+
+`description` admite entre 20 y 2000 caracteres — la idea es un resumen
+acotado, no pegar una transcripción completa (puedes inspirarte en
+[`docs/transcripcion_ejemplo.md`](docs/transcripcion_ejemplo.md)).
+`project_type`, `detail_level` y `output_format` son los enums definidos en
+[`app/schemas.py`](app/schemas.py).
 
 Respuesta de ejemplo:
 
 ```json
 {
-  "estimation": "## Estimación...",
-  "model": "claude-haiku-4-5",
-  "provider": "anthropic",
+  "text": "## Estimación...",
+  "prompt_version": "v1",
+  "system_prompt": "Eres un asistente experto...",
+  "model": "gpt-4o-mini",
   "input_tokens": 512,
   "output_tokens": 340,
-  "estimated_cost_usd": 0.002,
-  "truncated": false
+  "truncated": false,
+  "cache_hit": false
 }
 ```
 
-## Interfaz de chat (Streamlit)
-
-Además de la API REST, el proyecto incluye una interfaz conversacional web
-para pegar transcripciones y ver la estimación generarse en streaming, sin
-necesidad de `curl` ni Swagger.
+## Formulario web (Streamlit)
 
 ```bash
 uv run streamlit run streamlit_app.py
 ```
 
-Se abre en `http://localhost:8501`. Pega el texto de
-[`docs/transcripcion_ejemplo.md`](docs/transcripcion_ejemplo.md) (o tu
-propia transcripción) en el cuadro de chat inferior.
+Se abre en `http://localhost:8501`. El formulario pide descripción, tipo de
+proyecto, nivel de detalle y formato de salida — los mismos campos que
+`EstimationRequest` — y al enviarlo hace un único `POST /estimate` (sin
+streaming ni historial de chat). El panel lateral muestra el resultado de la
+última llamada: modelo, tokens, si se sirvió desde cache, y el `system
+prompt` real que se envió al LLM.
 
-Características:
+## Prompts versionados
 
-- **Chat con historial**: cada pregunta se envía junto con toda la
-  conversación anterior (`st.session_state`), así que puedes pedir ajustes
-  sobre una estimación ya generada ("ponlo en formato tabla", "aumenta un
-  10% el trabajo"...) y el modelo mantiene el contexto. El historial vive
-  solo en la sesión del navegador: se pierde al recargar la página.
-- **Streaming real**: la respuesta se muestra token a token a medida que
-  llega del proveedor (Anthropic/OpenAI), usando `st.write_stream` sobre un
-  generador (`generate_estimation_stream` en `llm_service.py`).
-- **Mismo system prompt que la API**: reutiliza `build_system_prompt()`, por
-  lo que el criterio y los ejemplos de referencia (CAG) son idénticos a los
-  del endpoint `/api/v1/estimate`.
-- **Panel lateral**: muestra las métricas de la última llamada (modelo,
-  tokens de entrada/salida, si la respuesta se truncó, tiempo de respuesta).
-- **API key no hardcodeada**: se lee de `.env` a través de `app.config.settings`,
-  igual que en la API REST.
+Los templates viven en `app/prompts/estimation/<version>/` (Jinja2, con
+`StrictUndefined` para detectar variables no pasadas). `render_estimation_prompt(request, version="v1")`
+en [`app/prompts/loader.py`](app/prompts/loader.py) devuelve `(system, user)`
+listos para enviar al modelo; cambiar de versión es cuestión de crear una
+carpeta `v2/` nueva y pasar `version="v2"`, sin tocar el resto del código.
 
 ## Validación y pipeline automático
 
-La estructura de carpetas y el funcionamiento del servicio se validan con una
-suite de tests (`pytest`), que se ejecuta automáticamente en cada push/PR
+La suite de tests (`pytest`) se ejecuta automáticamente en cada push/PR
 mediante GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
-- `tests/test_structure.py`: comprueba que existen los ficheros y carpetas
-  esperados y que los módulos de la app son importables.
+- `tests/test_structure.py`: existencia de ficheros/carpetas esperados y
+  que los módulos de la app son importables.
 - `tests/test_api.py`: levanta la app con `TestClient` y valida el flujo
-  completo del endpoint `/api/v1/estimate` (mockeando la llamada al LLM para
-  no depender de credenciales reales en CI).
+  completo del endpoint `/api/v1/estimate` (mockeando la llamada al LLM).
+- `tests/test_cache.py`: valida que el servicio no se rompe si Redis no
+  está disponible.
+- `tests/prompts/test_estimation_v1.py`: valida el contenido de los
+  templates renderizados (sin llamar al LLM).
 
 Para ejecutar los tests en local:
 
