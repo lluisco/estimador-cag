@@ -72,7 +72,7 @@ def test_estimate_endpoint_accepts_prompt_version_query_param():
     assert response.status_code == 200
     body = response.json()
     assert body["prompt_version"] == "v2"
-    assert "resumen ejecutivo" in body["system_prompt"]
+    assert "executive summary" in body["system_prompt"]
 
 
 def test_estimate_endpoint_rejects_unknown_prompt_version():

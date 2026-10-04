@@ -19,8 +19,8 @@ def _build_request(
 def test_user_prompt_wraps_description_in_project_description_block():
     _, user = render_estimation_prompt(_build_request())
 
-    start = user.index("<descripcion_proyecto>")
-    end = user.index("</descripcion_proyecto>")
+    start = user.index("<project_description>")
+    end = user.index("</project_description>")
 
     assert start < user.index(DESCRIPTION) < end
 
@@ -29,13 +29,13 @@ def test_system_prompt_varies_by_output_format():
     system_phases, _ = render_estimation_prompt(_build_request(output_format=OutputFormat.PHASES_TABLE))
     system_narrative, _ = render_estimation_prompt(_build_request(output_format=OutputFormat.NARRATIVE))
 
-    assert "tabla markdown" in system_phases
-    assert "tabla markdown" not in system_narrative
+    assert "markdown table" in system_phases
+    assert "markdown table" not in system_narrative
 
 
 def test_system_prompt_varies_by_detail_level():
     system_detailed, _ = render_estimation_prompt(_build_request(detail_level=DetailLevel.DETAILED))
     system_summary, _ = render_estimation_prompt(_build_request(detail_level=DetailLevel.SUMMARY))
 
-    assert "supuestos" in system_detailed
-    assert "supuestos" not in system_summary
+    assert "assumptions" in system_detailed
+    assert "assumptions" not in system_summary

@@ -22,8 +22,8 @@ def test_v2_system_prompt_adds_executive_tone():
     system_v1, _ = render_estimation_prompt(_build_request(), version=PromptVersion.V1)
     system_v2, _ = render_estimation_prompt(_build_request(), version=PromptVersion.V2)
 
-    assert "resumen ejecutivo" in system_v2
-    assert "resumen ejecutivo" not in system_v1
+    assert "executive summary" in system_v2
+    assert "executive summary" not in system_v1
 
 
 def test_v2_keeps_same_user_prompt_and_examples_as_v1():
@@ -31,8 +31,8 @@ def test_v2_keeps_same_user_prompt_and_examples_as_v1():
     system_v2, user_v2 = render_estimation_prompt(_build_request(), version=PromptVersion.V2)
 
     assert user_v2 == user_v1
-    examples_v1 = system_v1[system_v1.index("<estimaciones_previas>"):]
-    examples_v2 = system_v2[system_v2.index("<estimaciones_previas>"):]
+    examples_v1 = system_v1[system_v1.index("<estimation_examples>"):]
+    examples_v2 = system_v2[system_v2.index("<estimation_examples>"):]
     assert examples_v2 == examples_v1
 
 
@@ -44,8 +44,8 @@ def test_v2_system_prompt_varies_by_output_format_and_detail_level():
         _build_request(detail_level=DetailLevel.DETAILED), version=PromptVersion.V2
     )
 
-    assert "tabla markdown" in system_phases
-    assert "supuestos" in system_detailed
+    assert "markdown table" in system_phases
+    assert "assumptions" in system_detailed
 
 
 def test_unknown_version_is_rejected():
