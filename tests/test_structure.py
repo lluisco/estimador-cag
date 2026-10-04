@@ -25,6 +25,19 @@ def test_expected_files_exist():
     assert not missing, f"Faltan ficheros/carpetas esperados: {missing}"
 
 
+def test_every_prompt_version_has_its_templates():
+    from app.schemas import PromptVersion
+
+    prompts_dir = ROOT / "app/prompts/estimation"
+    missing = [
+        f"{v.value}/{name}"
+        for v in PromptVersion
+        for name in ("system.j2", "user.j2", "examples.j2")
+        if not (prompts_dir / v.value / name).is_file()
+    ]
+    assert not missing, f"Faltan templates para versiones declaradas: {missing}"
+
+
 def test_app_package_is_importable():
     import app.main  # noqa: F401
     import app.services.llm_service  # noqa: F401

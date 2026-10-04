@@ -36,10 +36,12 @@ app/
 │   └── examples.py            # Ejemplos históricos usados en los templates (CAG)
 ├── prompts/
 │   ├── loader.py               # render_estimation_prompt(request, version) vía Jinja2
-│   └── estimation/v1/
-│       ├── system.j2           # Rol, reglas y bloques condicionales (formato/detalle)
-│       ├── user.j2              # Wrapper de la descripción del proyecto
-│       └── examples.j2          # Ejemplos few-shot incluidos en system.j2
+│   └── estimation/
+│       ├── v1/
+│       │   ├── system.j2       # Rol, reglas y bloques condicionales (formato/detalle)
+│       │   ├── user.j2         # Wrapper de la descripción del proyecto
+│       │   └── examples.j2     # Ejemplos few-shot incluidos en system.j2
+│       └── v2/                 # Igual que v1 + tono ejecutivo (ver "Prompts versionados")
 ├── routers/
 │   └── estimations.py         # Endpoint POST /api/v1/estimate
 └── services/
@@ -54,7 +56,8 @@ tests/
 ├── test_api.py                # Valida el flujo completo del endpoint (mockeando el LLM)
 ├── test_cache.py              # Valida el degradado ante fallos de Redis
 └── prompts/
-    └── test_estimation_v1.py  # Valida el render de los templates (sin LLM, milisegundos)
+    ├── test_estimation_v1.py  # Valida el render de los templates (sin LLM, milisegundos)
+    └── test_estimation_v2.py  # Valida la variación de v2 frente a v1
 .github/workflows/ci.yml       # Pipeline que ejecuta los tests automáticamente
 ```
 
@@ -117,6 +120,13 @@ curl -X POST http://localhost:8000/api/v1/estimate \
   }'
 ```
 
+Por defecto se usa la versión `v1` de los prompts. Para usar otra, pásala como
+query param (una versión inexistente devuelve `422`):
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/estimate?prompt_version=v2"   -H "Content-Type: application/json"   -d '{ ... }'
+```
+
 `description` admite entre 20 y 2000 caracteres — la idea es un resumen
 acotado, no pegar una transcripción completa (puedes inspirarte en
 [`docs/transcripcion_ejemplo.md`](docs/transcripcion_ejemplo.md)).
@@ -154,10 +164,23 @@ prompt` real que se envió al LLM.
 ## Prompts versionados
 
 Los templates viven en `app/prompts/estimation/<version>/` (Jinja2, con
-`StrictUndefined` para detectar variables no pasadas). `render_estimation_prompt(request, version="v1")`
+`StrictUndefined` para detectar variables no pasadas). `render_estimation_prompt(request, version)`
 en [`app/prompts/loader.py`](app/prompts/loader.py) devuelve `(system, user)`
-listos para enviar al modelo; cambiar de versión es cuestión de crear una
-carpeta `v2/` nueva y pasar `version="v2"`, sin tocar el resto del código.
+listos para enviar al modelo. Las versiones disponibles se declaran en el enum
+`PromptVersion` de [`app/schemas.py`](app/schemas.py), y el endpoint las expone
+como `?prompt_version=`. Cada versión es autocontenida (tiene su propia copia de
+`examples.j2`), así que modificar una nunca altera otra.
+
+| Versión | Variación respecto a la anterior |
+|---------|----------------------------------|
+| `v1`    | Versión base: asistente experto, tono neutro. |
+| `v2`    | Única variación deliberada: **tono ejecutivo** dirigido a un decisor no técnico (consultor senior, resumen ejecutivo inicial, frases cortas, sin jerga). Reglas, formatos, nivel de detalle, ejemplos y `user.j2` son idénticos a v1, para que cualquier diferencia en la salida sea atribuible al tono. |
+
+Para añadir una versión nueva: crea `app/prompts/estimation/vN/` con
+`system.j2`, `user.j2` y `examples.j2`, y añade `VN = "vN"` a `PromptVersion`
+(`tests/test_structure.py` comprueba que cada versión declarada tiene sus templates).
+El cache no necesita cambios: la clave incluye el system prompt renderizado,
+así que cada versión cachea por separado.
 
 ## Validación y pipeline automático
 
@@ -170,8 +193,9 @@ mediante GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml))
   completo del endpoint `/api/v1/estimate` (mockeando la llamada al LLM).
 - `tests/test_cache.py`: valida que el servicio no se rompe si Redis no
   está disponible.
-- `tests/prompts/test_estimation_v1.py`: valida el contenido de los
-  templates renderizados (sin llamar al LLM).
+- `tests/prompts/test_estimation_v1.py` / `test_estimation_v2.py`: validan el
+  contenido de los templates renderizados (sin llamar al LLM) y que v2 solo
+  difiere de v1 en el tono.
 
 Para ejecutar los tests en local:
 

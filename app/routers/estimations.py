@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.prompts.loader import render_estimation_prompt
-from app.schemas import EstimationRequest, EstimationResponse
+from app.schemas import EstimationRequest, EstimationResponse, PromptVersion
 from app.services.llm_service import StreamMetadata, generate_estimation, generate_estimation_stream
 
 import json
@@ -21,13 +21,18 @@ class ChatEstimationRequest(BaseModel):
     )
 
 @router.post("/estimate", response_model=EstimationResponse)
-async def estimate(request: EstimationRequest, version: str = "v1") -> EstimationResponse:
+async def estimate(
+    request: EstimationRequest,
+    prompt_version: PromptVersion = Query(
+        PromptVersion.V1, description="Versión de los templates de app/prompts/estimation/"
+    ),
+) -> EstimationResponse:
     try:
-        system_prompt, user_prompt = render_estimation_prompt(request, version=version)
+        system_prompt, user_prompt = render_estimation_prompt(request, version=prompt_version)
         result = generate_estimation(system_prompt, user_prompt)
         return EstimationResponse(
             text=result.text,
-            prompt_version=version,
+            prompt_version=prompt_version.value,
             system_prompt=system_prompt,
             model=result.model,
             input_tokens=result.input_tokens,

@@ -22,6 +22,13 @@ class OutputFormat(str, Enum):
     NARRATIVE = "narrative"
 
 
+class PromptVersion(str, Enum):
+    """Versiones disponibles en app/prompts/estimation/<version>/."""
+
+    V1 = "v1"
+    V2 = "v2"
+
+
 class EstimationRequest(BaseModel):
     description: str = Field(min_length=20, max_length=2000)
     project_type: ProjectType

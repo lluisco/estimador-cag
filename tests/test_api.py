@@ -57,6 +57,37 @@ def test_estimate_endpoint_full_flow():
     assert body["cache_hit"] is True
 
 
+def test_estimate_endpoint_accepts_prompt_version_query_param():
+    fake_result = EstimationResult(text="ok", input_tokens=1, output_tokens=1, truncated=False)
+    payload = {
+        "description": "El cliente necesita una web de reservas online.",
+        "project_type": "web_saas",
+        "detail_level": "medium",
+        "output_format": "narrative",
+    }
+
+    with patch("app.routers.estimations.generate_estimation", return_value=fake_result):
+        response = client.post("/api/v1/estimate?prompt_version=v2", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prompt_version"] == "v2"
+    assert "resumen ejecutivo" in body["system_prompt"]
+
+
+def test_estimate_endpoint_rejects_unknown_prompt_version():
+    response = client.post(
+        "/api/v1/estimate?prompt_version=v99",
+        json={
+            "description": "El cliente necesita una web de reservas online.",
+            "project_type": "web_saas",
+            "detail_level": "medium",
+            "output_format": "narrative",
+        },
+    )
+    assert response.status_code == 422
+
+
 def test_estimate_endpoint_requires_description():
     response = client.post("/api/v1/estimate", json={})
     assert response.status_code == 422
