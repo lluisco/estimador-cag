@@ -26,10 +26,13 @@ formulario (descripción + tipo + detalle + formato)
 Tiene dos interfaces sobre la misma lógica de negocio
 (`app/services/llm_service.py`):
 
-- **API REST** (`app/main.py`): endpoint de un solo turno pensado para integraciones.
+- **API REST** (`app/main.py`): endpoint de un solo turno (`/estimate`) para
+  integraciones y endpoints de **sesión** multi-turno con adjuntos
+  (ver "Sesiones conversacionales").
 - **Formulario web con Streamlit** (`streamlit_app.py`): formulario tipado
-  (reutiliza los mismos schemas Pydantic que la API) que pinta el resumen, las
-  métricas, la tabla de fases y sus supuestos, y muestra el detalle de la última llamada.
+  (reutiliza los mismos schemas Pydantic que la API) que trabaja dentro de una
+  sesión, pinta el resumen, las métricas, la tabla de fases y sus supuestos, y
+  muestra la memoria del proyecto y el detalle de la última llamada.
 
 ## Estructura del proyecto
 
@@ -60,7 +63,8 @@ app/
     ├── llm_wrapper.py         # litellm.Router (primario + fallback) + Instructor (salida estructurada)
     ├── cache.py                # Cache exact-match en Redis (degrada sin bloquear si no hay Redis)
     ├── attachments.py         # Extracción de texto de PDF/Word (pypdf, python-docx)
-    └── project_memory.py      # Extractor LLM que actualiza el project_metadata de la sesión
+    ├── project_memory.py      # Extractor LLM que actualiza el project_metadata de la sesión
+    └── session_service.py     # Estimación dentro de una sesión: historial + metadata + LLM
 streamlit_app.py                # Formulario web (Streamlit) sobre la API
 docs/
 └── transcripcion_ejemplo.md   # Transcripción de ejemplo para inspirar una descripción
@@ -199,13 +203,28 @@ cualquier otro error del proveedor.
 uv run streamlit run streamlit_app.py
 ```
 
-Se abre en `http://localhost:8501`. El formulario pide descripción, tipo de
-proyecto, nivel de detalle y formato de salida — los mismos campos que
-`EstimationRequest` — y al enviarlo hace un único `POST /estimate` (sin
-streaming ni historial de chat). Muestra el resumen, la duración, el coste y la
-confianza totales, la tabla de fases y un desplegable de supuestos por fase.
-El panel lateral muestra el resultado de la última llamada: modelo, tokens, si
-se sirvió desde cache, y el `system prompt` real que se envió al LLM.
+Se abre en `http://localhost:8501`. Al cargar la página crea una sesión
+(`POST /sessions`) y guarda el `session_id` en `st.session_state`. El formulario
+pide la transcripción (o la nueva información del cliente), un selector múltiple
+de adjuntos (PDF y Word), el tipo de proyecto, el nivel de detalle y el formato de
+salida. Al enviarlo hace un `POST /sessions/{id}/estimate` multipart y después un
+`GET /sessions/{id}` para refrescar el panel lateral. No hay hilo de chat: cada
+envío reemplaza la estimación mostrada, y la continuidad la aporta la sesión.
+Muestra el resumen, la duración, el coste y la confianza totales, la tabla de
+fases y un desplegable de supuestos por fase.
+
+El panel lateral muestra:
+
+- el `session_id`, el número de turnos del historial y un botón **Nueva
+  conversación** que crea una sesión nueva y limpia el estado;
+- la **memoria del proyecto** (`project_metadata`) en JSON, para ver cómo se
+  acumulan los hechos entre turnos;
+- el resultado de la última llamada: modelo, tokens, si se sirvió desde cache, y
+  el `system prompt` real que se envió al LLM.
+
+Como las sesiones viven en memoria del servidor, si se reinicia uvicorn (por
+ejemplo con `--reload` al guardar un archivo) el `session_id` que conserva
+Streamlit deja de existir y la API responde `404`: pulsa "Nueva conversación".
 
 ## Prompts versionados
 
@@ -250,10 +269,25 @@ curl -X POST http://localhost:8000/api/v1/sessions
 curl -X POST http://localhost:8000/api/v1/sessions/<session_id>/estimate \
   -F "transcript=Quiero una app de reservas para mi academia" \
   -F "attachments=@spec.pdf" -F "attachments=@propuesta.docx"
+
+# 3. consultar el estado de la sesión (turnos y project_metadata)
+curl http://localhost:8000/api/v1/sessions/<session_id>
 ```
 
-Un `session_id` inexistente devuelve `404`; un adjunto que no sea `.pdf` o
-`.docx`, o que pese más de 5 MB, devuelve `400`.
+Campos del formulario de `/sessions/{id}/estimate`: `transcript` (obligatorio),
+`attachments` (opcional, varios), y los parámetros tipados `project_type`,
+`detail_level`, `output_format` y `prompt_version`, todos con valor por defecto
+(`web_saas`, `medium`, `phases_table` y `v2`). La respuesta respeta el mismo
+schema `EstimationResponse` que `/estimate`.
+
+Códigos de error: un `session_id` inexistente devuelve `404`; un adjunto que no sea
+`.pdf` o `.docx`, o que pese más de 5 MB, devuelve `400`; una entrada rechazada por
+los guardrails también `400`.
+
+El límite de 2000 caracteres de `description` (propio de `/estimate`) no se aplica
+aquí: la transcripción más el texto de los adjuntos puede superarlo, así que el
+endpoint valida la transcripción original y después sustituye `description` por el
+texto completo sin revalidar.
 
 ### Historial frente a memoria
 
@@ -269,6 +303,26 @@ El system prompt **no se guarda en el historial**: se regenera en cada turno a
 partir del `project_metadata` actual, de modo que la ventana nunca puede
 descartarlo. Cuando un turno antiguo sale de la ventana, sus hechos siguen
 disponibles porque ya están en el `project_metadata`.
+
+**Qué se guarda en el historial.** Por cada turno, el mensaje del usuario se guarda
+con el transcript original más una nota `[Adjuntos: nombre.pdf]`, **sin** el texto de
+los adjuntos (si no, un PDF largo se reenviaría en cada turno de la ventana). El
+mensaje del asistente se guarda como un resumen compacto: resumen, total de semanas y
+euros y nombres de fases. Los hechos de los documentos llegan al turno siguiente a
+través del `project_metadata`.
+
+**Tamaño de la ventana.** El mensaje en curso cuenta como un turno: al LLM viajan
+como máximo `MAX_TURNS - 1` pares guardados más el mensaje nuevo, de modo que el total
+de turnos de usuario en la llamada es `MAX_TURNS`. `MAX_TURNS` es de momento una
+constante de [`app/sessions.py`](app/sessions.py), no una variable de entorno.
+
+**Atomicidad.** La sesión solo se modifica cuando la estimación tiene éxito. Si el
+LLM falla o un guardrail rechaza la entrada, el historial y el `project_metadata`
+quedan como estaban.
+
+**Inyección en el prompt.** El bloque `<project_metadata>` está en la plantilla `v2`
+(va al final del system prompt para mantener estable el prefijo cacheable).
+La plantilla `v1` no lo usa. Con la memoria vacía, el bloque sale vacío.
 
 **Volatilidad.** Las sesiones viven en un diccionario en memoria del proceso: se
 pierden al reiniciar el servicio y no se comparten entre workers. Es una decisión
@@ -318,10 +372,27 @@ por turno (máx. 500 tokens de salida).
 
 ### Estado
 
-Hecho: modelo de sesión, `POST /sessions`, endpoint multipart con extracción de
-adjuntos, bloque `<project_metadata>` en el template v2 y extractor.
-Pendiente: conectar el endpoint al LLM con historial y metadata (Paso 5), adaptar el
-cliente Streamlit (Paso 6) y los tests de integración (Paso 7).
+Hecho: modelo de sesión, `POST /sessions` y `GET /sessions/{id}`, endpoint multipart
+con extracción de adjuntos y estimación con historial + `project_metadata`, bloque
+`<project_metadata>` en la plantilla v2, extractor y cliente Streamlit adaptado.
+
+Pendiente (trabajo en curso):
+
+- Tests de integración con `pytest` y `httpx.AsyncClient`: dos peticiones enlazadas
+  que actualizan el `project_metadata`, una petición con PDF adjunto y 8 turnos que
+  verifican el límite de la ventana.
+- Manejo de errores del LLM en `/sessions/{id}/estimate`: las excepciones de
+  validación agotada (`InstructorRetryException`) y de salida truncada
+  (`IncompleteOutputException`) aún no se traducen a `502` como en `/estimate`, así
+  que hoy llegan como `500`. Tampoco se traduce a `422` una transcripción de menos de
+  20 caracteres.
+- `MAX_TURNS` como variable de entorno (`SESSION_MAX_TURNS`).
+
+Limitación conocida, heredada de `/estimate`: el validador de `EstimationResult`
+exige que los totales coincidan con la suma de las fases y el modelo a veces falla la
+suma en transcripciones complejas. Tras los reintentos de Instructor la petición
+falla y la sesión queda intacta. Una solución más robusta sería calcular los totales
+en código en lugar de pedírselos al modelo.
 
 ## Validación y pipeline automático
 
