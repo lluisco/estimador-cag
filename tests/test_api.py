@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from instructor.core.exceptions import IncompleteOutputException, InstructorRetryException
 
 from app.main import app
-from app.schemas import EstimationResult, Phase
+from app.guardrails.input import InputGuardrailViolation
+from app.schemas import EstimationResult, Phase, PromptVersion
 from app.services.llm_service import EstimationOutput
 
 client = TestClient(app)
@@ -36,6 +37,7 @@ def _fake_output(**overrides) -> EstimationOutput:
     fields = dict(
         result=result, input_tokens=100, output_tokens=50, truncated=False,
         model="gpt-4o-mini", provider="openai", cache_hit=True,
+        system_prompt="system prompt renderizado",
     )
     fields.update(overrides)
     return EstimationOutput(**fields)
@@ -78,8 +80,7 @@ def test_estimate_endpoint_accepts_prompt_version_query_param():
 
     assert response.status_code == 200
     assert response.json()["prompt_version"] == "v2"
-    system_prompt = mocked.call_args.args[0]
-    assert "executive summary" in system_prompt
+    assert mocked.call_args.args[1] == PromptVersion.V2
 
 
 def test_estimate_endpoint_rejects_unknown_prompt_version():
@@ -123,3 +124,14 @@ def test_estimate_endpoint_returns_502_when_output_hits_token_limit():
 
     assert response.status_code == 502
     assert "ESTIMATION_MAX_TOKENS" in response.json()["detail"]
+
+
+def test_estimate_endpoint_returns_400_on_guardrail_violation():
+    with patch(
+        "app.routers.estimations.generate_estimation",
+        side_effect=InputGuardrailViolation("bloqueado", reason="pii"),
+    ):
+        response = client.post("/api/v1/estimate", json=PAYLOAD)
+
+    assert response.status_code == 400
+    assert "bloqueado" in response.json()["detail"]

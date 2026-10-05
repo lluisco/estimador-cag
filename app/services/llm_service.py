@@ -10,7 +10,9 @@ from app.services.llm_wrapper import LLMWrapper
 
 from app.services.cache import EstimationCache
 
-from app.schemas import EstimationResult
+from app.guardrails.input import validate_input
+from app.prompts.loader import render_estimation_prompt
+from app.schemas import EstimationRequest, EstimationResult, PromptVersion
 
 log = structlog.get_logger()
 
@@ -37,6 +39,7 @@ class EstimationOutput(NamedTuple):
     model: str = ""
     provider: str = ""
     cache_hit: bool = False
+    system_prompt: str = ""
 
 class StreamMetadata:
     def __init__(self):
@@ -76,7 +79,13 @@ def build_system_prompt() -> str:
         f"<estimaciones_previas>\n{_build_examples_block()}\n</estimaciones_previas>"
     )
 
-def generate_estimation(system_prompt: str, user_prompt: str) -> EstimationOutput:
+def generate_estimation(
+    request: EstimationRequest, prompt_version: PromptVersion = PromptVersion.V1
+) -> EstimationOutput:
+    # guardrails sobre la entrada del usuario, antes de renderizar y de la caché
+    validate_input(request.description)
+    system_prompt, user_prompt = render_estimation_prompt(request, version=prompt_version)
+
     # exact-match cache lookup
     cache_key = EstimationCache.make_key(
         system_prompt=system_prompt, user_message=user_prompt, model=settings.PRIMARY_MODEL,
@@ -94,6 +103,7 @@ def generate_estimation(system_prompt: str, user_prompt: str) -> EstimationOutpu
             model=cached["model"],
             provider=cached["provider"],
             cache_hit=True,
+            system_prompt=system_prompt,
         )
 
     # LLM call with instructor + pydantic validators
@@ -112,6 +122,7 @@ def generate_estimation(system_prompt: str, user_prompt: str) -> EstimationOutpu
         model=response.model,
         provider=response.provider,
         cache_hit=False,
+        system_prompt=system_prompt,
     )
     _cache.set(cache_key, {
         "result": output.result.model_dump(),

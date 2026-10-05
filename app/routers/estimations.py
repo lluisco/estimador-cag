@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query
 from instructor.core.exceptions import IncompleteOutputException, InstructorRetryException
 from pydantic import BaseModel, Field
 
-from app.prompts.loader import render_estimation_prompt
+from app.guardrails.input import InputGuardrailViolation
 from app.schemas import EstimationRequest, EstimationResponse, PromptVersion
 from app.services.llm_service import StreamMetadata, generate_estimation, generate_estimation_stream
 
@@ -29,12 +29,11 @@ async def estimate(
     ),
 ) -> EstimationResponse:
     try:
-        system_prompt, user_prompt = render_estimation_prompt(request, version=prompt_version)
-        output = generate_estimation(system_prompt, user_prompt)
+        output = generate_estimation(request, prompt_version)
         return EstimationResponse(
             result=output.result,
             prompt_version=prompt_version.value,
-            system_prompt=system_prompt,
+            system_prompt=output.system_prompt,
             model=output.model,
             provider=output.provider,
             input_tokens=output.input_tokens,
@@ -42,6 +41,8 @@ async def estimate(
             truncated=output.truncated,
             cache_hit=output.cache_hit,
         )
+    except InputGuardrailViolation as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except IncompleteOutputException:
         raise HTTPException(
             status_code=502,
