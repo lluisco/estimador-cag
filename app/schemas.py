@@ -40,18 +40,20 @@ class EstimationRequest(BaseModel):
 
 
 class Phase(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=64)
     duration_weeks: int = Field(ge=1, le=52)
     cost_eur: int = Field(gt=0)
     confidence_pct: int = Field(ge=0, le=100)
     assumptions: list[str]
 
 class EstimationResult(BaseModel):
-    summary: str
+    # Orden deliberado: `phases` va antes de los totales para que el modelo fije
+    # primero las cifras por fase y luego solo tenga que sumarlas.
+    summary: str = Field(min_length=10, max_length=1200)
+    confidence_pct: int = Field(ge=0, le=100)
+    phases: list[Phase] = Field(min_length=1, max_length=12)
     total_duration_weeks: int = Field(ge=1)
     total_cost_eur: int = Field(gt=0)
-    confidence_pct: int = Field(ge=0, le=100)
-    phases: list[Phase] = Field(min_length=1)
 
     @model_validator(mode="after")
     def totals_must_match_phases(self):

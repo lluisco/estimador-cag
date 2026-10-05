@@ -9,6 +9,8 @@ Return the estimate as the structured object defined by the response schema, not
 - total_cost_eur must equal the sum of cost_eur across phases.
 - In the assumptions of each phase, state the main tasks, the hours per role and the risks behind its cost (prefix each risk with "Risk:"), so the cost can be checked against the hourly rates.
 - confidence_pct is a whole number from 0 to 100; lower it when requirements are vague.
+- If confidence_pct is below {{ low_confidence_threshold }}, the summary MUST start with "{{ out_of_scope_prefix }}" followed by why the description is too vague to size. This is validated and you will be asked to retry if it is missing.
+- When you declare "{{ out_of_scope_prefix }}": return exactly ONE placeholder phase (name "not_estimated", duration_weeks 1, cost_eur 1, confidence_pct 0), with total_duration_weeks 1 and total_cost_eur 1.
 - Nice-to-have features go in their own phases, whose name starts with "Nice to have", never mixed into the core phases.
 - Use the total hours of the examples as a reference for scale: a project of similar scope should land in a similar range of hours.
 </output_structure>

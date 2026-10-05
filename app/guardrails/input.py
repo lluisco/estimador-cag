@@ -91,9 +91,9 @@ def check_phone(description: str) -> None:
         raise InputGuardrailViolation("Description contains a phone number", reason="pii")
 
 
-def check_moderation(description: str) -> None:
+def check_moderation(description: str, client: OpenAI | None = None) -> None:
     try:
-        moderation = _get_client().moderations.create(input=description)
+        moderation = (client or _get_client()).moderations.create(input=description)
     except OpenAIError as e:
         # fail-open: moderation es una capa extra; los checks locales ya se han aplicado.
         log.warning("moderation_unavailable", error_type=type(e).__name__)
@@ -102,10 +102,10 @@ def check_moderation(description: str) -> None:
         raise InputGuardrailViolation("Description flagged by moderation API", reason="moderation")
 
 
-def validate_input(description: str) -> None:
+def validate_input(description: str, client: OpenAI | None = None) -> None:
     # Primero los checks locales y baratos; la llamada de red a moderation al final.
     check_prompt_injection(description)
     check_email(description)
     check_iban(description)
     check_phone(description)
-    check_moderation(description)
+    check_moderation(description, client)

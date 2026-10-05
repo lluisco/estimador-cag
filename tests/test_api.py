@@ -134,4 +134,4 @@ def test_estimate_endpoint_returns_400_on_guardrail_violation():
         response = client.post("/api/v1/estimate", json=PAYLOAD)
 
     assert response.status_code == 400
-    assert "bloqueado" in response.json()["detail"]
+    assert response.json()["detail"] == {"reason": "pii", "message": "bloqueado"}

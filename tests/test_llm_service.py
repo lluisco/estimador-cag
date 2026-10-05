@@ -24,7 +24,7 @@ def _no_moderation_call():
 
 def _result() -> EstimationResult:
     return EstimationResult(
-        summary="Resumen",
+        summary="Resumen de la estimación.",
         total_duration_weeks=2,
         total_cost_eur=5000,
         confidence_pct=80,

@@ -5,7 +5,12 @@ import structlog
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.config import settings
-from app.schemas import EstimationRequest, PromptVersion
+from app.schemas import (
+    LOW_CONFIDENCE_THRESHOLD,
+    OUT_OF_SCOPE_PREFIX,
+    EstimationRequest,
+    PromptVersion,
+)
 
 _env = Environment(
     loader=FileSystemLoader(Path(__file__).parent),
@@ -32,6 +37,8 @@ def render_estimation_prompt(
         "detail_level": request.detail_level.value,
         "output_format": request.output_format.value,
         "hourly_rates": settings.HOURLY_RATES_EUR,
+        "out_of_scope_prefix": OUT_OF_SCOPE_PREFIX,
+        "low_confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
     }
 
     system = _env.get_template(f"estimation/{version}/system.j2").render(context)

@@ -10,7 +10,7 @@ def _phase(weeks: int = 2, cost: int = 5000) -> Phase:
 
 def _result(**overrides) -> dict:
     data = {
-        "summary": "Resumen",
+        "summary": "Resumen de la estimación.",
         "total_duration_weeks": 4,
         "total_cost_eur": 10000,
         "confidence_pct": 70,

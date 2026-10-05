@@ -42,7 +42,7 @@ async def estimate(
             cache_hit=output.cache_hit,
         )
     except InputGuardrailViolation as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"reason": e.reason, "message": e.message})
     except IncompleteOutputException:
         raise HTTPException(
             status_code=502,
