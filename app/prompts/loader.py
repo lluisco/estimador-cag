@@ -4,6 +4,7 @@ from pathlib import Path
 import structlog
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from app.config import settings
 from app.schemas import EstimationRequest, PromptVersion
 
 _env = Environment(
@@ -30,6 +31,7 @@ def render_estimation_prompt(
         "project_type": request.project_type.value,
         "detail_level": request.detail_level.value,
         "output_format": request.output_format.value,
+        "hourly_rates": settings.HOURLY_RATES_EUR,
     }
 
     system = _env.get_template(f"estimation/{version}/system.j2").render(context)

@@ -4,6 +4,9 @@ import time
 
 import structlog
 from litellm import Router
+from pydantic import BaseModel
+
+import instructor
 
 log = structlog.get_logger()
 
@@ -23,6 +26,16 @@ def _provider_from_model(model: str) -> str:
 @dataclass
 class LLMResponse:
     text: str
+    model: str
+    provider: str
+    input_tokens: int
+    output_tokens: int
+    finish_reason: str
+    latency_ms: int
+
+@dataclass
+class LLMStructuredResponse:
+    parsed: BaseModel
     model: str
     provider: str
     input_tokens: int
@@ -59,6 +72,8 @@ class LLMWrapper:
             ],
             num_retries=num_retries,
         )
+
+        self._instructor = instructor.from_litellm(self.router.completion)
 
     def _deployment(self, model: str) -> dict:
         provider = _provider_from_model(model)
@@ -121,6 +136,54 @@ class LLMWrapper:
             finish_reason=(choice.finish_reason or "stop").lower(),
             latency_ms=latency_ms,
         )
+
+    def complete_structured(
+        self, *, system_prompt: str, user_message: str, response_model: type[BaseModel],
+        max_tokens: int = 2000, max_retries: int = 2,
+    ) -> LLMStructuredResponse:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+        log.info("llm_call_started", model=self.primary_model, structured=True)
+        t0 = time.perf_counter()
+        try:
+            parsed, raw = self._instructor.create_with_completion(
+                model=self.MODEL_GROUP,
+                messages=messages,
+                max_tokens=max_tokens,
+                response_model=response_model,
+                max_retries=max_retries,
+            )
+        except Exception as exc:
+            log.error("llm_call_failed", error_type=type(exc).__name__,
+                error=str(exc)[:200], latency_ms=int((time.perf_counter() - t0) * 1000))
+            raise
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+
+        raw_model = raw.model
+        finish_reason = (raw.choices[0].finish_reason or "stop").lower()
+        # `raw.usage` es de la última llamada. Si hubo reintentos de validación, no suma los anteriores.
+        log.info(
+            "llm_call_completed",
+            model=_strip_provider_prefix(raw_model),
+            provider=_provider_from_model(raw_model),
+            input_tokens=raw.usage.prompt_tokens,
+            output_tokens=raw.usage.completion_tokens,
+            latency_ms=latency_ms,
+            finish_reason=finish_reason,
+            structured=True,
+        )
+        return LLMStructuredResponse(
+            parsed=parsed,
+            model=_strip_provider_prefix(raw_model),
+            provider=_provider_from_model(raw_model),
+            input_tokens=raw.usage.prompt_tokens,
+            output_tokens=raw.usage.completion_tokens,
+            finish_reason=finish_reason,
+            latency_ms=latency_ms,
+        )
+
 
     def complete_stream(
         self, *, system_prompt: str, messages: list[dict], max_tokens: int, metadata

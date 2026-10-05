@@ -29,13 +29,15 @@ def test_system_prompt_varies_by_output_format():
     system_phases, _ = render_estimation_prompt(_build_request(output_format=OutputFormat.PHASES_TABLE))
     system_narrative, _ = render_estimation_prompt(_build_request(output_format=OutputFormat.NARRATIVE))
 
-    assert "markdown table" in system_phases
-    assert "markdown table" not in system_narrative
+    assert "group the work into phases" in system_phases
+    assert "group the work into phases" not in system_narrative
+    assert "continuous paragraph" in system_narrative
 
 
 def test_system_prompt_varies_by_detail_level():
     system_detailed, _ = render_estimation_prompt(_build_request(detail_level=DetailLevel.DETAILED))
     system_summary, _ = render_estimation_prompt(_build_request(detail_level=DetailLevel.SUMMARY))
 
-    assert "assumptions" in system_detailed
-    assert "assumptions" not in system_summary
+    assert "subtask level" in system_detailed
+    assert "subtask level" not in system_summary
+    assert "2 to 4 phases" in system_summary

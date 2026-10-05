@@ -1,0 +1,7 @@
+<hourly_rates>
+Compute every cost_eur as the hours of each role multiplied by that role's hourly rate. Never leave a cost at 0.
+{% for role, rate in hourly_rates.items() %}
+- {{ role }}: {{ rate }} EUR/hour
+{% endfor %}
+Use the "other" rate for any role that is not listed.
+</hourly_rates>

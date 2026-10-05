@@ -1,12 +1,18 @@
 import json
 from typing import NamedTuple
 
+import structlog
+
 from app.config import settings
 from app.context.examples import ESTIMATION_EXAMPLES
 
 from app.services.llm_wrapper import LLMWrapper
 
 from app.services.cache import EstimationCache
+
+from app.schemas import EstimationResult
+
+log = structlog.get_logger()
 
 _wrapper = LLMWrapper(
     primary_model=settings.PRIMARY_MODEL,
@@ -23,8 +29,8 @@ _cache = EstimationCache(
 )
 
 
-class EstimationResult(NamedTuple):
-    text: str
+class EstimationOutput(NamedTuple):
+    result: EstimationResult
     input_tokens: int
     output_tokens: int
     truncated: bool
@@ -70,26 +76,52 @@ def build_system_prompt() -> str:
         f"<estimaciones_previas>\n{_build_examples_block()}\n</estimaciones_previas>"
     )
 
-def generate_estimation(system_prompt: str, user_prompt: str) -> EstimationResult:
+def generate_estimation(system_prompt: str, user_prompt: str) -> EstimationOutput:
+    # exact-match cache lookup
     cache_key = EstimationCache.make_key(
-        system_prompt=system_prompt, user_message=user_prompt, model=settings.PRIMARY_MODEL, max_tokens=2000
+        system_prompt=system_prompt, user_message=user_prompt, model=settings.PRIMARY_MODEL,
+        max_tokens=settings.ESTIMATION_MAX_TOKENS,
     )
 
     cached = _cache.get(cache_key)
     if cached:
-        return EstimationResult(**cached)._replace(cache_hit=True)
+        log.info("estimation_cache_hit", kind="exact", key_prefix=cache_key[:24])
+        return EstimationOutput(
+            result=EstimationResult.model_validate(cached["result"]),
+            input_tokens=cached["input_tokens"],
+            output_tokens=cached["output_tokens"],
+            truncated=cached["truncated"],
+            model=cached["model"],
+            provider=cached["provider"],
+            cache_hit=True,
+        )
 
-    response = _wrapper.complete(system_prompt=system_prompt, user_message=user_prompt, max_tokens=2000)
-    result = EstimationResult(
-        text=response.text,
+    # LLM call with instructor + pydantic validators
+    response = _wrapper.complete_structured(
+        system_prompt=system_prompt,
+        user_message=user_prompt,
+        max_tokens=settings.ESTIMATION_MAX_TOKENS,
+        response_model=EstimationResult,
+    )
+
+    output = EstimationOutput(
+        result=response.parsed,
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
         truncated=response.finish_reason == "length",
         model=response.model,
         provider=response.provider,
+        cache_hit=False,
     )
-    _cache.set(cache_key, result._asdict())
-    return result
+    _cache.set(cache_key, {
+        "result": output.result.model_dump(),
+        "input_tokens": output.input_tokens,
+        "output_tokens": output.output_tokens,
+        "truncated": output.truncated,
+        "model": output.model,
+        "provider": output.provider,
+    })
+    return output
 
 def generate_estimation_stream(messages: list[dict], metadata: StreamMetadata):
     system_prompt = build_system_prompt()

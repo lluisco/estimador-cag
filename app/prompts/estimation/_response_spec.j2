@@ -1,0 +1,34 @@
+{% include "estimation/_rates.j2" %}
+
+
+<output_structure>
+Return the estimate as the structured object defined by the response schema, not as free text:
+- summary: a short overview of the project (2-3 sentences).
+- phases: one entry per project phase, each with name, duration_weeks, cost_eur, confidence_pct and assumptions (list of strings).
+- total_duration_weeks must equal the sum of duration_weeks across phases (plus or minus 1 week at most).
+- total_cost_eur must equal the sum of cost_eur across phases.
+- In the assumptions of each phase, state the main tasks, the hours per role and the risks behind its cost (prefix each risk with "Risk:"), so the cost can be checked against the hourly rates.
+- confidence_pct is a whole number from 0 to 100; lower it when requirements are vague.
+- Nice-to-have features go in their own phases, whose name starts with "Nice to have", never mixed into the core phases.
+- Use the total hours of the examples as a reference for scale: a project of similar scope should land in a similar range of hours.
+</output_structure>
+
+<output_format>
+{% if output_format == "phases_table" %}
+Output format: group the work into phases with a clear deliverable each; the interface shows them as a table.
+{% elif output_format == "line_items" %}
+Output format: use one phase per work item, with no grouping, so that each line has its own duration and cost.
+{% elif output_format == "narrative" %}
+Output format: write the summary as a continuous paragraph (4-6 sentences) that walks through the phases and their costs, and keep the phases themselves short.
+{% endif %}
+</output_format>
+
+<detail_level>
+{% if detail_level == "summary" %}
+Level of detail: use 2 to 4 phases with 1-2 assumptions each; do not list individual tasks.
+{% elif detail_level == "medium" %}
+Level of detail: use 4 to 6 phases with 2-3 assumptions each, naming the main tasks.
+{% elif detail_level == "detailed" %}
+Level of detail: use as many phases as needed to reach subtask level, with the tasks, hours per role and at least one risk in each phase.
+{% endif %}
+</detail_level>

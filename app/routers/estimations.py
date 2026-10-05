@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
+from instructor.core.exceptions import IncompleteOutputException, InstructorRetryException
 from pydantic import BaseModel, Field
 
 from app.prompts.loader import render_estimation_prompt
@@ -29,16 +30,28 @@ async def estimate(
 ) -> EstimationResponse:
     try:
         system_prompt, user_prompt = render_estimation_prompt(request, version=prompt_version)
-        result = generate_estimation(system_prompt, user_prompt)
+        output = generate_estimation(system_prompt, user_prompt)
         return EstimationResponse(
-            text=result.text,
+            result=output.result,
             prompt_version=prompt_version.value,
             system_prompt=system_prompt,
-            model=result.model,
-            input_tokens=result.input_tokens,
-            output_tokens=result.output_tokens,
-            truncated=result.truncated,
-            cache_hit=result.cache_hit,
+            model=output.model,
+            provider=output.provider,
+            input_tokens=output.input_tokens,
+            output_tokens=output.output_tokens,
+            truncated=output.truncated,
+            cache_hit=output.cache_hit,
+        )
+    except IncompleteOutputException:
+        raise HTTPException(
+            status_code=502,
+            detail="La estimación se cortó por el límite de tokens de salida. "
+            "Prueba con un nivel de detalle menor o sube ESTIMATION_MAX_TOKENS.",
+        )
+    except InstructorRetryException as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"El modelo no devolvió una estimación válida tras varios intentos: {e}",
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

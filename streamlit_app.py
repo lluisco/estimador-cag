@@ -39,6 +39,37 @@ def request_estimation(request: EstimationRequest) -> dict:
     return response.json()
 
 
+def render_estimation(estimation: dict) -> None:
+    st.subheader("Resumen ejecutivo")
+    st.write(estimation["summary"])
+
+    col_weeks, col_cost, col_confidence = st.columns(3)
+    col_weeks.metric("Duración total", f"{estimation['total_duration_weeks']} semanas")
+    col_cost.metric("Coste total", f"{estimation['total_cost_eur']:,} €".replace(",", "."))
+    col_confidence.metric("Confianza", f"{estimation['confidence_pct']} %")
+
+    st.subheader("Fases")
+    st.dataframe(
+        [
+            {
+                "Fase": phase["name"],
+                "Semanas": phase["duration_weeks"],
+                "Coste (€)": phase["cost_eur"],
+                "Confianza (%)": phase["confidence_pct"],
+            }
+            for phase in estimation["phases"]
+        ],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    for phase in estimation["phases"]:
+        if phase["assumptions"]:
+            with st.expander(f"Supuestos: {phase['name']}"):
+                for assumption in phase["assumptions"]:
+                    st.markdown(f"- {assumption}")
+
+
 st.title("Estimador CAG")
 
 with st.form("estimation_form"):
@@ -85,7 +116,7 @@ if submitted:
         st.error(f"Error al generar la estimación: {e.response.text}")
         st.stop()
 
-    st.markdown(result["text"])
+    render_estimation(result["result"])
     st.session_state.last_call_metrics = {
         "model": result.get("model", "desconocido"),
         "input_tokens": result.get("input_tokens", 0),
