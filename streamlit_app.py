@@ -38,6 +38,41 @@ def request_estimation(request: EstimationRequest) -> dict:
     response.raise_for_status()
     return response.json()
 
+# session-05 -- Funciones para interactuar con la API de sesiones
+
+def create_session() -> str:
+    response = httpx.post(f"{API_BASE_URL}/sessions", timeout=10.0)
+    response.raise_for_status()
+    return response.json()["session_id"]
+
+def reset_conversation() -> None:
+    st.session_state.session_id = create_session()
+    st.session_state.last_estimation = None
+    st.session_state.session_state_info = None
+    st.session_state.pop("last_call_metrics", None)
+
+def request_session_estimation(session_id, transcript, project_type, detail_level, output_format, files) -> dict:
+    response = httpx.post(
+        f"{API_BASE_URL}/sessions/{session_id}/estimate",
+        data={
+            "transcript": transcript,
+            "project_type": project_type.value,
+            "detail_level": detail_level.value,
+            "output_format": output_format.value,
+        },
+        files=[("attachments", (f.name, f.getvalue(), f.type)) for f in files],
+        timeout=120.0,
+    )
+    response.raise_for_status()
+    return response.json()
+
+def fetch_session_info(session_id: str) -> dict:
+    response = httpx.get(f"{API_BASE_URL}/sessions/{session_id}", timeout=10.0)
+    response.raise_for_status()
+    return response.json()
+
+## end session-05
+
 
 def render_estimation(estimation: dict) -> None:
     st.subheader("Resumen ejecutivo")
@@ -72,11 +107,23 @@ def render_estimation(estimation: dict) -> None:
 
 st.title("Estimador CAG")
 
+if "session_id" not in st.session_state:
+    try:
+        reset_conversation()
+    except httpx.ConnectError:
+        st.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
+        st.stop()
+
 with st.form("estimation_form"):
     description = st.text_area(
         "Descripción del proyecto",
         placeholder="Resume la reunión con el cliente: qué necesita, alcance, restricciones...",
         height=200,
+    )
+    attachments = st.file_uploader(
+        "Adjuntar archivos (pdf o word)",
+        accept_multiple_files=True,
+        type=["pdf", "docx"],
     )
     project_type = st.selectbox(
         "Tipo de proyecto",
@@ -95,20 +142,44 @@ with st.form("estimation_form"):
     )
     submitted = st.form_submit_button("Generar estimación")
 
+# if submitted:
+#     try:
+#         request = EstimationRequest(
+#             description=description,
+#             project_type=project_type,
+#             detail_level=detail_level,
+#             output_format=output_format,
+#         )
+#     except ValueError as e:
+#         st.error(f"Datos del formulario inválidos: {e}")
+#         st.stop()
+
+#     try:
+#         result = request_estimation(request)
+#     except httpx.ConnectError:
+#         st.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
+#         st.stop()
+#     except httpx.HTTPStatusError as e:
+#         st.error(f"Error al generar la estimación: {e.response.text}")
+#         st.stop()
+
+#     render_estimation(result["result"])
+#     st.session_state.last_call_metrics = {
+#         "model": result.get("model", "desconocido"),
+#         "input_tokens": result.get("input_tokens", 0),
+#         "output_tokens": result.get("output_tokens", 0),
+#         "truncated": result.get("truncated", False),
+#         "cache_hit": result.get("cache_hit", False),
+#         "prompt_version": result.get("prompt_version", "unknown"),
+#         "system_prompt": result.get("system_prompt", ""),
+#     }
+
 if submitted:
     try:
-        request = EstimationRequest(
-            description=description,
-            project_type=project_type,
-            detail_level=detail_level,
-            output_format=output_format,
+        result = request_session_estimation(
+            st.session_state.session_id, description, project_type, detail_level, output_format, attachments
         )
-    except ValueError as e:
-        st.error(f"Datos del formulario inválidos: {e}")
-        st.stop()
-
-    try:
-        result = request_estimation(request)
+        st.session_state.session_state_info = fetch_session_info(st.session_state.session_id)
     except httpx.ConnectError:
         st.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
         st.stop()
@@ -116,7 +187,7 @@ if submitted:
         st.error(f"Error al generar la estimación: {e.response.text}")
         st.stop()
 
-    render_estimation(result["result"])
+    st.session_state.last_estimation = result["result"]
     st.session_state.last_call_metrics = {
         "model": result.get("model", "desconocido"),
         "input_tokens": result.get("input_tokens", 0),
@@ -127,7 +198,20 @@ if submitted:
         "system_prompt": result.get("system_prompt", ""),
     }
 
+    if st.session_state.get("last_estimation"):
+        render_estimation(st.session_state.last_estimation)
+
 with st.sidebar:
+    st.header("Conversación")
+    st.caption(f"Sesión: {st.session_state.session_id}")
+    st.button("Nueva conversación", on_click=reset_conversation)
+
+    info = st.session_state.get("session_state_info")
+    if info:
+        st.write(f"Turnos en el historial: {info['turns']}")
+        with st.expander("Memoria del proyecto (project_metadata)", expanded=True):
+            st.json(info["project_metadata"])
+
     st.header("Contexto CAG")
 
     if "last_call_metrics" in st.session_state:

@@ -4,7 +4,7 @@ import structlog
 from fastapi import FastAPI, Request
 
 from app.config import settings
-from app.routers import estimations
+from app.routers import estimations, sessions
 
 
 def configure_logging() -> None:
@@ -45,6 +45,7 @@ app = FastAPI(
 )
 
 app.include_router(estimations.router, prefix="/api/v1")
+app.include_router(sessions.router, prefix="/api/v1")
 
 
 @app.middleware("http")

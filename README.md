@@ -51,12 +51,16 @@ app/
 │       │   ├── user.j2         # Wrapper de la descripción del proyecto
 │       │   └── examples.j2     # Ejemplos few-shot incluidos en system.j2
 │       └── v2/                 # Igual que v1 + tono ejecutivo (ver "Prompts versionados")
+├── sessions.py                # Estado conversacional: ConversationHistory, ProjectMetadata, Session
 ├── routers/
-│   └── estimations.py         # Endpoint POST /api/v1/estimate
+│   ├── estimations.py         # Endpoint POST /api/v1/estimate
+│   └── sessions.py            # POST /api/v1/sessions y /sessions/{id}/estimate (multipart)
 └── services/
     ├── llm_service.py         # Orquesta cache + llamada al LLM
     ├── llm_wrapper.py         # litellm.Router (primario + fallback) + Instructor (salida estructurada)
-    └── cache.py                # Cache exact-match en Redis (degrada sin bloquear si no hay Redis)
+    ├── cache.py                # Cache exact-match en Redis (degrada sin bloquear si no hay Redis)
+    ├── attachments.py         # Extracción de texto de PDF/Word (pypdf, python-docx)
+    └── project_memory.py      # Extractor LLM que actualiza el project_metadata de la sesión
 streamlit_app.py                # Formulario web (Streamlit) sobre la API
 docs/
 └── transcripcion_ejemplo.md   # Transcripción de ejemplo para inspirar una descripción
@@ -232,6 +236,92 @@ Para añadir una versión nueva: crea `app/prompts/estimation/vN/` con
 (`tests/test_structure.py` comprueba que cada versión declarada tiene sus templates).
 El cache no necesita cambios: la clave incluye el system prompt renderizado,
 así que cada versión cachea por separado.
+
+## Sesiones conversacionales (sesión 05)
+
+El endpoint `/estimate` es transaccional. Para iterar sobre un mismo proyecto
+(refinar alcance, añadir documentos) hay un modelo de **sesión**:
+
+```bash
+# 1. crear sesión -> {"session_id": "<uuid>"}
+curl -X POST http://localhost:8000/api/v1/sessions
+
+# 2. estimar dentro de la sesión (multipart/form-data, adjuntos opcionales)
+curl -X POST http://localhost:8000/api/v1/sessions/<session_id>/estimate \
+  -F "transcript=Quiero una app de reservas para mi academia" \
+  -F "attachments=@spec.pdf" -F "attachments=@propuesta.docx"
+```
+
+Un `session_id` inexistente devuelve `404`; un adjunto que no sea `.pdf` o
+`.docx`, o que pese más de 5 MB, devuelve `400`.
+
+### Historial frente a memoria
+
+Son dos cosas distintas y viven separadas en [`app/sessions.py`](app/sessions.py):
+
+| | Historial | Memoria (`project_metadata`) |
+|---|---|---|
+| Qué es | El array `messages` que viaja a la API en cada llamada | Hechos del proyecto: nombre, equipo asumido, tecnologías, alcance acordado |
+| Duración | Ventana deslizante: solo los últimos `MAX_TURNS` (6) turnos (par user+assistant) | Se acumula durante toda la sesión |
+| Dónde va al LLM | Como mensajes user/assistant | Dentro del system prompt, en el bloque `<project_metadata>` |
+
+El system prompt **no se guarda en el historial**: se regenera en cada turno a
+partir del `project_metadata` actual, de modo que la ventana nunca puede
+descartarlo. Cuando un turno antiguo sale de la ventana, sus hechos siguen
+disponibles porque ya están en el `project_metadata`.
+
+**Volatilidad.** Las sesiones viven en un diccionario en memoria del proceso: se
+pierden al reiniciar el servicio y no se comparten entre workers. Es una decisión
+consciente para esta fase (sin BBDD ni Redis); el patrón es lo que importa aquí,
+no la durabilidad.
+
+### Adjuntos: camino B (extracción local)
+
+Elegimos **extraer el texto en local** (`pypdf` para PDF, `python-docx` para Word) y
+concatenarlo al transcript con un separador claro:
+
+```
+<transcript>
+
+--- attachment: spec.pdf ---
+<texto extraído>
+```
+
+Por qué no enviar el archivo directamente al LLM (camino A, Files API):
+
+- El servicio usa `litellm.Router` con **fallback entre proveedores**. Un archivo
+  subido a la Files API queda ligado a un proveedor, y el fallback dejaría de
+  funcionar con adjuntos.
+- La Files API no cubre bien Word.
+- El texto extraído es la base del chunking de RAG del módulo 3.
+
+Limitaciones asumidas: se pierden los diagramas y las imágenes, y un PDF
+escaneado (sin capa de texto) produce texto vacío porque no hay OCR. Los adjuntos
+se tratan como **input no confiable**: los guardrails de entrada deben ejecutarse
+sobre el texto completo (transcript + adjuntos), no solo sobre el transcript.
+
+### Cómo se extrae el `project_metadata`
+
+Tras cada respuesta, [`app/services/project_memory.py`](app/services/project_memory.py)
+hace una **segunda llamada al LLM** (extractor) que recibe los hechos conocidos, el
+mensaje del cliente y el resumen de la estimación, y devuelve un `ProjectMetadata`
+validado por Instructor/Pydantic. La fusión con lo ya conocido se hace **en código**,
+no en el LLM: las tecnologías se acumulan sin duplicados y el resto de campos solo se
+sobrescriben si hay un valor nuevo, así el modelo no puede borrar un hecho por error.
+Si la extracción falla, se conserva el metadata anterior y se registra un warning: la
+memoria es auxiliar y no debe romper la petición.
+
+Por qué un extractor LLM y no una heurística (regex): los hechos llegan en lenguaje
+natural libre ("el proyecto se llamará Atlas", "somos tres desarrolladores"), y un
+regex sobre la respuesta del modelo es frágil. El coste es una llamada pequeña extra
+por turno (máx. 500 tokens de salida).
+
+### Estado
+
+Hecho: modelo de sesión, `POST /sessions`, endpoint multipart con extracción de
+adjuntos, bloque `<project_metadata>` en el template v2 y extractor.
+Pendiente: conectar el endpoint al LLM con historial y metadata (Paso 5), adaptar el
+cliente Streamlit (Paso 6) y los tests de integración (Paso 7).
 
 ## Validación y pipeline automático
 

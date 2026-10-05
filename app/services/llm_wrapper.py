@@ -138,13 +138,16 @@ class LLMWrapper:
         )
 
     def complete_structured(
-        self, *, system_prompt: str, user_message: str, response_model: type[BaseModel],
+        self, *, system_prompt: str | None = None, user_message: str | None = None, response_model: type[BaseModel],
+        messages: list[dict] | None = None,
         max_tokens: int = 2000, max_retries: int = 2,
     ) -> LLMStructuredResponse:
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message},
-        ]
+        
+        if messages is None:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ]
         log.info("llm_call_started", model=self.primary_model, structured=True)
         t0 = time.perf_counter()
         try:

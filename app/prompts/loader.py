@@ -11,6 +11,7 @@ from app.schemas import (
     EstimationRequest,
     PromptVersion,
 )
+from app.sessions import ProjectMetadata
 
 _env = Environment(
     loader=FileSystemLoader(Path(__file__).parent),
@@ -28,7 +29,9 @@ def _content_hash(text: str) -> str:
 
 
 def render_estimation_prompt(
-    request: EstimationRequest, version: PromptVersion = PromptVersion.V1
+    request: EstimationRequest, 
+    version: PromptVersion = PromptVersion.V1,
+    project_metadata: ProjectMetadata | None = None,
 ) -> tuple[str, str]:
     version = PromptVersion(version).value
     context = {
@@ -39,6 +42,7 @@ def render_estimation_prompt(
         "hourly_rates": settings.HOURLY_RATES_EUR,
         "out_of_scope_prefix": OUT_OF_SCOPE_PREFIX,
         "low_confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
+        "project_metadata": (project_metadata or ProjectMetadata()).model_dump(),
     }
 
     system = _env.get_template(f"estimation/{version}/system.j2").render(context)
