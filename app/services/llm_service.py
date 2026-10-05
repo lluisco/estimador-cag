@@ -6,6 +6,7 @@ import structlog
 from app.config import settings
 from app.context.examples import ESTIMATION_EXAMPLES
 
+from app.guardrails.output import enforce_scope_response
 from app.services.llm_wrapper import LLMWrapper
 
 from app.services.cache import EstimationCache
@@ -113,9 +114,19 @@ def generate_estimation(
         max_tokens=settings.ESTIMATION_MAX_TOKENS,
         response_model=EstimationResult,
     )
+    log.info(
+        "estimation_generated",
+        prompt_version=prompt_version,
+        confidence_pct=response.parsed.confidence_pct,
+        total_cost_eur=response.parsed.total_cost_eur,
+        phases=len(response.parsed.phases),
+    )
+
+    # guardrails sobre la salida del modelo
+    result = enforce_scope_response(response.parsed)
 
     output = EstimationOutput(
-        result=response.parsed,
+        result=result,
         input_tokens=response.input_tokens,
         output_tokens=response.output_tokens,
         truncated=response.finish_reason == "length",

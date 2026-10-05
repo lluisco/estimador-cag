@@ -2,6 +2,9 @@ from enum import Enum
 
 from pydantic import BaseModel, Field, model_validator
 
+LOW_CONFIDENCE_THRESHOLD: int = 50
+OUT_OF_SCOPE_PREFIX: str = "OUT OF SCOPE:"
+
 
 class ProjectType(str, Enum):
     MOBILE_APP = "mobile_app"
@@ -35,6 +38,7 @@ class EstimationRequest(BaseModel):
     detail_level: DetailLevel
     output_format: OutputFormat
 
+
 class Phase(BaseModel):
     name: str
     duration_weeks: int = Field(ge=1, le=52)
@@ -60,6 +64,18 @@ class EstimationResult(BaseModel):
         if abs(sum_costs - self.total_cost_eur) > max(1, self.total_cost_eur * 0.02):
             raise ValueError(
                 f"total_cost_eur is {self.total_cost_eur} but phases sum to {sum_costs}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def low_confidence_requires_out_of_scope_prefix(self) -> "EstimationResult":
+        if self.confidence_pct < LOW_CONFIDENCE_THRESHOLD and not self.summary.startswith(
+            OUT_OF_SCOPE_PREFIX
+        ):
+            raise ValueError(
+                f"confidence_pct < {LOW_CONFIDENCE_THRESHOLD} requires summary to "
+                f"start with {OUT_OF_SCOPE_PREFIX!r}; refuse the estimation if the "
+                f"description is too vague to size"
             )
         return self
 
