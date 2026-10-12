@@ -17,8 +17,9 @@ no la durabilidad.
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
+from app.config import settings
 
-MAX_TURNS = 6
+MAX_TURNS = settings.SESSION_MAX_TURNS
 
 
 class ProjectMetadata(BaseModel):

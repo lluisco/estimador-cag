@@ -32,5 +32,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     LOG_LEVEL: str = "info"
 
+    SESSION_MAX_TURNS: int = 6
+
 
 settings = Settings()

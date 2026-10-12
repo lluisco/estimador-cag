@@ -1,6 +1,7 @@
 from fastapi import APIRouter, File, Form, HTTPException, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from instructor.core import IncompleteOutputException, InstructorRetryException
+from pydantic import BaseModel, ValidationError
 
 from app.guardrails.input import InputGuardrailViolation
 from app.schemas import DetailLevel, EstimationRequest, EstimationResponse, OutputFormat, ProjectType, PromptVersion
@@ -55,12 +56,17 @@ async def estimate_in_session(
     except UnsupportedAttachment as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    request = EstimationRequest(
-        description=transcript,
-        project_type=project_type,
-        detail_level=detail_level,
-        output_format=output_format,
-    ).model_copy(update={"description": full_transcript})
+    try:
+        request = EstimationRequest(
+            description=transcript,
+            project_type=project_type,
+            detail_level=detail_level,
+            output_format=output_format,
+        )
+    except ValidationError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    request = request.model_copy(update={"description": full_transcript})
 
     try:
         output = await run_in_threadpool(
@@ -68,8 +74,18 @@ async def estimate_in_session(
             [f.filename for f in attachments], prompt_version,
         )
     except InputGuardrailViolation as e:
-        raise HTTPException(status_code=400, detail={"reason": e.reason, "message": e.message})
-    # (aquí van los mismos except de IncompleteOutputException / InstructorRetryException del router de estimations)
+            raise HTTPException(status_code=400, detail={"reason": e.reason, "message": e.message})
+    except IncompleteOutputException:
+        raise HTTPException(
+            status_code=502,
+            detail="La estimación se cortó por el límite de tokens de salida. "
+            "Prueba con un nivel de detalle menor o sube ESTIMATION_MAX_TOKENS.",
+        )
+    except InstructorRetryException as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"El modelo no devolvió una estimación válida tras varios intentos: {e}",
+        )
 
     return EstimationResponse(
         result=output.result, prompt_version=prompt_version.value,

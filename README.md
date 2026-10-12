@@ -104,6 +104,7 @@ tests/
    | `PRIMARY_MODEL` / `FALLBACK_MODEL`     | Modelos usados por `litellm.Router`     |
    | `REDIS_URL`                       | Cache exact-match; opcional en local          |
    | `ESTIMATION_MAX_TOKENS`           | Tope de tokens de salida de `/estimate` (4000 por defecto) |
+   | `SESSION_MAX_TURNS`               | Turnos que conserva la ventana deslizante del historial de una sesión (6 por defecto) |
    | `HOURLY_RATES_EUR`                | Tarifa EUR/hora por rol, en JSON (ver abajo)  |
 
    Las tarifas por defecto son `developer` 60, `project_manager` 60, `ux_ui` 50
@@ -248,7 +249,7 @@ prefijo `Risk:`) van dentro de los `assumptions` de cada fase.
 | Versión | Variación respecto a la anterior |
 |---------|----------------------------------|
 | `v1`    | Versión base: asistente experto, tono neutro. |
-| `v2`    | Única variación deliberada: **tono ejecutivo** dirigido a un decisor no técnico (consultor senior, resumen ejecutivo inicial, frases cortas, sin jerga). Reglas, formatos, nivel de detalle, ejemplos y `user.j2` son idénticos a v1, para que cualquier diferencia en la salida sea atribuible al tono. |
+| `v2`    | Única variación deliberada: **tono ejecutivo** dirigido a un decisor no técnico (consultor senior, resumen ejecutivo inicial, frases cortas, sin jerga). Reglas, formatos, nivel de detalle, ejemplos, `user.j2` y el bloque `<project_metadata>` son idénticos a v1, para que cualquier diferencia en la salida sea atribuible al tono. |
 
 Para añadir una versión nueva: crea `app/prompts/estimation/vN/` con
 `system.j2`, `user.j2` y `examples.j2`, y añade `VN = "vN"` a `PromptVersion`
@@ -280,9 +281,14 @@ Campos del formulario de `/sessions/{id}/estimate`: `transcript` (obligatorio),
 (`web_saas`, `medium`, `phases_table` y `v2`). La respuesta respeta el mismo
 schema `EstimationResponse` que `/estimate`.
 
-Códigos de error: un `session_id` inexistente devuelve `404`; un adjunto que no sea
-`.pdf` o `.docx`, o que pese más de 5 MB, devuelve `400`; una entrada rechazada por
-los guardrails también `400`.
+Códigos de error:
+
+| Código | Causa |
+|--------|-------|
+| `400` | Adjunto que no es `.pdf` o `.docx`, que pesa más de 5 MB, que no se puede leer o que no contiene texto extraíble (p. ej. un PDF escaneado); o entrada rechazada por los guardrails |
+| `404` | `session_id` inexistente |
+| `422` | Transcripción demasiado corta (menos de 20 caracteres) |
+| `502` | El modelo no devolvió una estimación válida tras los reintentos de Instructor, o la salida se cortó por `ESTIMATION_MAX_TOKENS` |
 
 El límite de 2000 caracteres de `description` (propio de `/estimate`) no se aplica
 aquí: la transcripción más el texto de los adjuntos puede superarlo, así que el
@@ -313,16 +319,18 @@ través del `project_metadata`.
 
 **Tamaño de la ventana.** El mensaje en curso cuenta como un turno: al LLM viajan
 como máximo `MAX_TURNS - 1` pares guardados más el mensaje nuevo, de modo que el total
-de turnos de usuario en la llamada es `MAX_TURNS`. `MAX_TURNS` es de momento una
-constante de [`app/sessions.py`](app/sessions.py), no una variable de entorno.
+de turnos de usuario en la llamada es `MAX_TURNS`. Se configura con la variable de
+entorno `SESSION_MAX_TURNS` (por defecto 6); [`app/sessions.py`](app/sessions.py) la
+lee en `MAX_TURNS`. Bajarla a 2 o 3 es la forma más rápida de ver la ventana en acción.
 
 **Atomicidad.** La sesión solo se modifica cuando la estimación tiene éxito. Si el
 LLM falla o un guardrail rechaza la entrada, el historial y el `project_metadata`
 quedan como estaban.
 
-**Inyección en el prompt.** El bloque `<project_metadata>` está en la plantilla `v2`
-(va al final del system prompt para mantener estable el prefijo cacheable).
-La plantilla `v1` no lo usa. Con la memoria vacía, el bloque sale vacío.
+**Inyección en el prompt.** El bloque `<project_metadata>` está en las plantillas
+`v1` y `v2` (va al final del system prompt para mantener estable el prefijo
+cacheable). `render_estimation_prompt` acepta el `project_metadata` de la sesión; con
+la memoria vacía, o en el endpoint `/estimate` que no usa sesión, el bloque sale vacío.
 
 **Volatilidad.** Las sesiones viven en un diccionario en memoria del proceso: se
 pierden al reiniciar el servicio y no se comparten entre workers. Es una decisión
@@ -374,19 +382,15 @@ por turno (máx. 500 tokens de salida).
 
 Hecho: modelo de sesión, `POST /sessions` y `GET /sessions/{id}`, endpoint multipart
 con extracción de adjuntos y estimación con historial + `project_metadata`, bloque
-`<project_metadata>` en la plantilla v2, extractor y cliente Streamlit adaptado.
+`<project_metadata>` en las plantillas v1 y v2, extractor, ventana configurable con
+`SESSION_MAX_TURNS`, manejo de errores (400/404/422/502) y cliente Streamlit adaptado.
+Los tests del render de `project_metadata` están en `tests/prompts/test_estimation_v2.py`.
 
 Pendiente (trabajo en curso):
 
-- Tests de integración con `pytest` y `httpx.AsyncClient`: dos peticiones enlazadas
-  que actualizan el `project_metadata`, una petición con PDF adjunto y 8 turnos que
-  verifican el límite de la ventana.
-- Manejo de errores del LLM en `/sessions/{id}/estimate`: las excepciones de
-  validación agotada (`InstructorRetryException`) y de salida truncada
-  (`IncompleteOutputException`) aún no se traducen a `502` como en `/estimate`, así
-  que hoy llegan como `500`. Tampoco se traduce a `422` una transcripción de menos de
-  20 caracteres.
-- `MAX_TURNS` como variable de entorno (`SESSION_MAX_TURNS`).
+- Tests de integración de las sesiones con `pytest` y `httpx.AsyncClient`: dos
+  peticiones enlazadas que actualizan el `project_metadata`, una petición con PDF
+  adjunto y 8 turnos que verifican el límite de la ventana.
 
 Limitación conocida, heredada de `/estimate`: el validador de `EstimationResult`
 exige que los totales coincidan con la suma de las fases y el modelo a veces falla la

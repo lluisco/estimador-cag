@@ -1,3 +1,5 @@
+import structlog
+
 from app.config import settings
 from app.guardrails.input import validate_input
 from app.guardrails.output import enforce_scope_response
@@ -6,6 +8,8 @@ from app.schemas import EstimationRequest, EstimationResult, PromptVersion
 from app.services.llm_service import EstimationOutput, _wrapper
 from app.services.project_memory import update_project_metadata
 from app.sessions import Session
+
+log = structlog.get_logger()
 
 
 def _history_user_text(transcript: str, attachment_names: list[str]) -> str:
@@ -45,13 +49,25 @@ def generate_session_estimation(
     )
     result = enforce_scope_response(response.parsed)
 
-    # solo tras el éxito se muta la sesión
+    new_metadata = update_project_metadata(
+        session.project_metadata, request.description, result.summary
+    )
+
+    # solo tras el éxito se muta la sesión, las dos cosas juntas
     session.history.add_turn(
         _history_user_text(transcript, attachment_names),
         _history_assistant_text(result),
     )
-    session.project_metadata = update_project_metadata(
-        session.project_metadata, request.description, result.summary
+    session.project_metadata = new_metadata
+
+    # solo ids y contadores: el contenido incluye datos del cliente
+    log.info(
+        "session_turn_completed",
+        session_id=session.session_id,
+        turns=session.history.turns,
+        attachments=len(attachment_names),
+        metadata_empty=session.project_metadata.is_empty(),
+        technologies=len(session.project_metadata.mentioned_technologies),
     )
 
     return EstimationOutput(

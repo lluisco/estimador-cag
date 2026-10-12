@@ -1,7 +1,7 @@
 import httpx
 import streamlit as st
 
-from app.schemas import DetailLevel, EstimationRequest, OutputFormat, ProjectType
+from app.schemas import DetailLevel, OutputFormat, ProjectType
 
 API_BASE_URL = "http://localhost:8000/api/v1"
 
@@ -23,20 +23,6 @@ OUTPUT_FORMAT_LABELS = {
     OutputFormat.LINE_ITEMS: "Partidas (line items)",
     OutputFormat.NARRATIVE: "Narrativo",
 }
-
-try:
-    context = httpx.get(f"{API_BASE_URL}/context", timeout=10.0).json()
-except httpx.ConnectError:
-    st.sidebar.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
-    context = None
-
-
-def request_estimation(request: EstimationRequest) -> dict:
-    response = httpx.post(
-        f"{API_BASE_URL}/estimate", json=request.model_dump(mode="json"), timeout=120.0
-    )
-    response.raise_for_status()
-    return response.json()
 
 # session-05 -- Funciones para interactuar con la API de sesiones
 
@@ -142,38 +128,6 @@ with st.form("estimation_form"):
     )
     submitted = st.form_submit_button("Generar estimación")
 
-# if submitted:
-#     try:
-#         request = EstimationRequest(
-#             description=description,
-#             project_type=project_type,
-#             detail_level=detail_level,
-#             output_format=output_format,
-#         )
-#     except ValueError as e:
-#         st.error(f"Datos del formulario inválidos: {e}")
-#         st.stop()
-
-#     try:
-#         result = request_estimation(request)
-#     except httpx.ConnectError:
-#         st.error("No se puede conectar con la API. ¿Está arrancado `uvicorn`?")
-#         st.stop()
-#     except httpx.HTTPStatusError as e:
-#         st.error(f"Error al generar la estimación: {e.response.text}")
-#         st.stop()
-
-#     render_estimation(result["result"])
-#     st.session_state.last_call_metrics = {
-#         "model": result.get("model", "desconocido"),
-#         "input_tokens": result.get("input_tokens", 0),
-#         "output_tokens": result.get("output_tokens", 0),
-#         "truncated": result.get("truncated", False),
-#         "cache_hit": result.get("cache_hit", False),
-#         "prompt_version": result.get("prompt_version", "unknown"),
-#         "system_prompt": result.get("system_prompt", ""),
-#     }
-
 if submitted:
     try:
         result = request_session_estimation(
@@ -198,8 +152,8 @@ if submitted:
         "system_prompt": result.get("system_prompt", ""),
     }
 
-    if st.session_state.get("last_estimation"):
-        render_estimation(st.session_state.last_estimation)
+if st.session_state.get("last_estimation"):
+    render_estimation(st.session_state.last_estimation)
 
 with st.sidebar:
     st.header("Conversación")
