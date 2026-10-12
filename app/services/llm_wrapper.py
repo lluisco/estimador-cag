@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Iterator
 import time
 
+import litellm
 import structlog
 from litellm import Router
 from pydantic import BaseModel
@@ -74,6 +75,8 @@ class LLMWrapper:
         )
 
         self._instructor = instructor.from_litellm(self.router.completion)
+        # Llamadas a un modelo concreto fuera del Router (p. ej. el extractor de metadata).
+        self._instructor_direct = instructor.from_litellm(litellm.completion)
 
     def _deployment(self, model: str) -> dict:
         provider = _provider_from_model(model)
@@ -141,18 +144,32 @@ class LLMWrapper:
         self, *, system_prompt: str | None = None, user_message: str | None = None, response_model: type[BaseModel],
         messages: list[dict] | None = None,
         max_tokens: int = 2000, max_retries: int = 2,
+        model: str | None = None,
     ) -> LLMStructuredResponse:
-        
+        """``model`` fuerza un modelo concreto. Si es el primario (o None) se usa el
+        Router, con su fallback; si es otro, se llama directo y sin fallback."""
         if messages is None:
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ]
-        log.info("llm_call_started", model=self.primary_model, structured=True)
+
+        if model is None or model == self.primary_model:
+            create = self._instructor.create_with_completion
+            call_params = {"model": self.MODEL_GROUP}
+        else:
+            create = self._instructor_direct.create_with_completion
+            call_params = {
+                "model": model,
+                "api_key": self.credentials.get(_provider_from_model(model)),
+                "timeout": self.timeout,
+            }
+
+        log.info("llm_call_started", model=model or self.primary_model, structured=True)
         t0 = time.perf_counter()
         try:
-            parsed, raw = self._instructor.create_with_completion(
-                model=self.MODEL_GROUP,
+            parsed, raw = create(
+                **call_params,
                 messages=messages,
                 max_tokens=max_tokens,
                 response_model=response_model,

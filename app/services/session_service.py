@@ -5,7 +5,8 @@ from app.guardrails.input import validate_input
 from app.guardrails.output import enforce_scope_response
 from app.prompts.loader import render_estimation_prompt
 from app.schemas import EstimationRequest, EstimationResult, PromptVersion
-from app.services.llm_service import EstimationOutput, _wrapper
+from app.services.llm_service import EstimationOutput
+from app.services.llm_wrapper import LLMWrapper
 from app.services.project_memory import update_project_metadata
 from app.sessions import Session
 
@@ -33,6 +34,8 @@ def generate_session_estimation(
     transcript: str,              # solo lo que escribió el cliente
     attachment_names: list[str],
     version: PromptVersion = PromptVersion.V2,
+    *,
+    llm_wrapper: LLMWrapper,
 ) -> EstimationOutput:
     # los adjuntos son input no confiable: se validan junto con el transcript
     validate_input(request.description)
@@ -42,7 +45,7 @@ def generate_session_estimation(
     )
     messages = session.history.to_messages_list(system_prompt, user_prompt)
 
-    response = _wrapper.complete_structured(
+    response = llm_wrapper.complete_structured(
         messages=messages,
         max_tokens=settings.ESTIMATION_MAX_TOKENS,
         response_model=EstimationResult,
@@ -50,7 +53,11 @@ def generate_session_estimation(
     result = enforce_scope_response(response.parsed)
 
     new_metadata = update_project_metadata(
-        session.project_metadata, request.description, result.summary
+        previous=session.project_metadata,
+        transcript=request.description,
+        result=result,
+        llm_wrapper=llm_wrapper,
+        model=settings.METADATA_EXTRACTOR_MODEL,
     )
 
     # solo tras el éxito se muta la sesión, las dos cosas juntas

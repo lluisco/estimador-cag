@@ -32,6 +32,11 @@ _cache = EstimationCache(
 )
 
 
+def get_llm_wrapper() -> LLMWrapper:
+    """Dependencia de FastAPI; los tests la sustituyen con ``dependency_overrides``."""
+    return _wrapper
+
+
 class EstimationOutput(NamedTuple):
     result: EstimationResult
     input_tokens: int

@@ -9,6 +9,7 @@ from app.schemas import (
     LOW_CONFIDENCE_THRESHOLD,
     OUT_OF_SCOPE_PREFIX,
     EstimationRequest,
+    EstimationResult,
     PromptVersion,
 )
 from app.sessions import ProjectMetadata
@@ -58,4 +59,23 @@ def render_estimation_prompt(
         user_chars=len(user),
     )
 
+    return system, user
+
+
+def render_metadata_extraction_prompt(
+    *,
+    previous: ProjectMetadata,
+    transcript: str,
+    result: EstimationResult,
+    version: str = "v1",
+) -> tuple[str, str]:
+    """Prompts del extractor de project_metadata (segunda llamada de cada turno)."""
+    context = {
+        "previous": previous.model_dump(),
+        "previous_is_empty": previous.is_empty(),
+        "transcript": transcript,
+        "result": result.model_dump(),
+    }
+    system = _env.get_template(f"metadata_extraction/{version}/system.j2").render(context)
+    user = _env.get_template(f"metadata_extraction/{version}/user.j2").render(context)
     return system, user

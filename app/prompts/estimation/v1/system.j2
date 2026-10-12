@@ -19,8 +19,10 @@ Use them as a reference for criteria, scope and effort; their layout is not the 
 {% include "estimation/v1/examples.j2" %}
 </estimation_examples>
 
-Facts about this project established in earlier turns of the conversation.
-Keep your estimate consistent with them, unless the client's latest message corrects them:
+Conversation context: this request may be one turn of an ongoing conversation about the same project.
+- Facts established in earlier turns are in <project_metadata>. Keep your estimate consistent with them, unless the client's latest message corrects them.
+- Treat the conversation history as already-established context. Do not ask the client to repeat information that is in <project_metadata> or in the prior turns.
+- If the latest message adds or changes scope of an already-estimated project, produce an updated full estimation that integrates the new information, not a delta.
 
 <project_metadata>
 {% if project_metadata.project_name %}

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "info"
 
     SESSION_MAX_TURNS: int = 6
+    # Tope de caracteres por adjunto: protege el presupuesto del prompt (el chunking llega con RAG).
+    MAX_ATTACHMENT_CHARS: int = 60_000
+    # Modelo de la segunda llamada por turno (extractor de project_metadata).
+    METADATA_EXTRACTOR_MODEL: str = "openai/gpt-4o-mini"
 
 
 settings = Settings()

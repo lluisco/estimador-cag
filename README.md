@@ -45,7 +45,9 @@ app/
 ├── context/
 │   └── examples.py            # Ejemplos históricos usados en los templates (CAG)
 ├── prompts/
-│   ├── loader.py               # render_estimation_prompt(request, version) vía Jinja2
+│   ├── loader.py               # render_estimation_prompt / render_metadata_extraction_prompt vía Jinja2
+│   ├── metadata_extraction/
+│   │   └── v1/                 # system.j2 + user.j2 del extractor de project_metadata
 │   └── estimation/
 │       ├── _rates.j2           # Tarifas por rol (compartido por todas las versiones)
 │       ├── _response_spec.j2   # Estructura de salida, formato y detalle (compartido)
@@ -69,6 +71,10 @@ streamlit_app.py                # Formulario web (Streamlit) sobre la API
 docs/
 └── transcripcion_ejemplo.md   # Transcripción de ejemplo para inspirar una descripción
 tests/
+├── conftest.py                # FakeLLMWrapper + fixtures de sesiones (TestClient + dependency_overrides)
+├── test_sessions_metadata.py  # project_metadata entre turnos, extractor y fusión
+├── test_sessions_attachments.py # Adjuntos PDF/Word: llegan al LLM, influyen y no se arrastran
+├── test_sessions_window.py    # La ventana acota el historial; la memoria sobrevive
 ├── test_structure.py          # Valida que la estructura de carpetas es correcta
 ├── test_api.py                # Valida el flujo completo del endpoint (mockeando el LLM)
 ├── test_schemas.py            # Valida EstimationResult/Phase (totales, límites, costes > 0)
@@ -105,6 +111,8 @@ tests/
    | `REDIS_URL`                       | Cache exact-match; opcional en local          |
    | `ESTIMATION_MAX_TOKENS`           | Tope de tokens de salida de `/estimate` (4000 por defecto) |
    | `SESSION_MAX_TURNS`               | Turnos que conserva la ventana deslizante del historial de una sesión (6 por defecto) |
+   | `MAX_ATTACHMENT_CHARS`            | Caracteres que se conservan de cada adjunto (60.000 por defecto) |
+   | `METADATA_EXTRACTOR_MODEL`        | Modelo del extractor de `project_metadata` (por defecto el mismo que `PRIMARY_MODEL`) |
    | `HOURLY_RATES_EUR`                | Tarifa EUR/hora por rol, en JSON (ver abajo)  |
 
    Las tarifas por defecto son `developer` 60, `project_manager` 60, `ux_ui` 50
@@ -287,13 +295,13 @@ Códigos de error:
 |--------|-------|
 | `400` | Adjunto que no es `.pdf` o `.docx`, que pesa más de 5 MB, que no se puede leer o que no contiene texto extraíble (p. ej. un PDF escaneado); o entrada rechazada por los guardrails |
 | `404` | `session_id` inexistente |
-| `422` | Transcripción demasiado corta (menos de 20 caracteres) |
+| `422` | Transcripción fuera de rango (menos de 20 o más de 80.000 caracteres), validada en el propio `Form` |
 | `502` | El modelo no devolvió una estimación válida tras los reintentos de Instructor, o la salida se cortó por `ESTIMATION_MAX_TOKENS` |
 
 El límite de 2000 caracteres de `description` (propio de `/estimate`) no se aplica
-aquí: la transcripción más el texto de los adjuntos puede superarlo, así que el
-endpoint valida la transcripción original y después sustituye `description` por el
-texto completo sin revalidar.
+aquí: la transcripción más el texto de los adjuntos puede superarlo. El `Form` valida
+la transcripción (20-80.000 caracteres) y el endpoint construye el `EstimationRequest`
+con `model_construct`, sin revalidar, con el texto completo.
 
 ### Historial frente a memoria
 
@@ -317,9 +325,9 @@ mensaje del asistente se guarda como un resumen compacto: resumen, total de sema
 euros y nombres de fases. Los hechos de los documentos llegan al turno siguiente a
 través del `project_metadata`.
 
-**Tamaño de la ventana.** El mensaje en curso cuenta como un turno: al LLM viajan
-como máximo `MAX_TURNS - 1` pares guardados más el mensaje nuevo, de modo que el total
-de turnos de usuario en la llamada es `MAX_TURNS`. Se configura con la variable de
+**Tamaño de la ventana.** El historial guarda como máximo `MAX_TURNS` pares
+user+assistant, y el mensaje en curso viaja aparte: al LLM le llegan el system prompt,
+hasta `MAX_TURNS` pares previos y el mensaje nuevo. Se configura con la variable de
 entorno `SESSION_MAX_TURNS` (por defecto 6); [`app/sessions.py`](app/sessions.py) la
 lee en `MAX_TURNS`. Bajarla a 2 o 3 es la forma más rápida de ver la ventana en acción.
 
@@ -331,11 +339,16 @@ quedan como estaban.
 `v1` y `v2` (va al final del system prompt para mantener estable el prefijo
 cacheable). `render_estimation_prompt` acepta el `project_metadata` de la sesión; con
 la memoria vacía, o en el endpoint `/estimate` que no usa sesión, el bloque sale vacío.
+Junto al bloque, el prompt indica al modelo que trate el historial como contexto ya
+establecido (sin pedir que se repita) y que, si llega alcance nuevo, devuelva una
+estimación **completa actualizada**, no un delta.
 
-**Volatilidad.** Las sesiones viven en un diccionario en memoria del proceso: se
-pierden al reiniciar el servicio y no se comparten entre workers. Es una decisión
-consciente para esta fase (sin BBDD ni Redis); el patrón es lo que importa aquí,
-no la durabilidad.
+**Volatilidad.** Las sesiones viven en memoria del proceso, dentro de un `SessionStore`
+que el router recibe con `Depends(get_session_store)`: se pierden al reiniciar el
+servicio y no se comparten entre workers. Es una decisión consciente para esta fase
+(sin BBDD ni Redis); el `SessionStore` es la única pieza a sustituir el día que haga
+falta persistencia. El wrapper del LLM también se inyecta (`Depends(get_llm_wrapper)`),
+lo que permite a los tests sustituir ambos con `dependency_overrides`.
 
 ### Adjuntos: camino B (extracción local)
 
@@ -346,8 +359,12 @@ concatenarlo al transcript con un separador claro:
 <transcript>
 
 --- attachment: spec.pdf ---
-<texto extraído>
+<texto extraído, recortado a MAX_ATTACHMENT_CHARS>
+--- end attachment ---
 ```
+
+Además del límite de 5 MB por archivo, el texto extraído de cada adjunto se recorta a
+`MAX_ATTACHMENT_CHARS` (60.000 por defecto) para no reventar la ventana de contexto.
 
 Por qué no enviar el archivo directamente al LLM (camino A, Files API):
 
@@ -366,31 +383,33 @@ sobre el texto completo (transcript + adjuntos), no solo sobre el transcript.
 
 Tras cada respuesta, [`app/services/project_memory.py`](app/services/project_memory.py)
 hace una **segunda llamada al LLM** (extractor) que recibe los hechos conocidos, el
-mensaje del cliente y el resumen de la estimación, y devuelve un `ProjectMetadata`
-validado por Instructor/Pydantic. La fusión con lo ya conocido se hace **en código**,
-no en el LLM: las tecnologías se acumulan sin duplicados y el resto de campos solo se
-sobrescriben si hay un valor nuevo, así el modelo no puede borrar un hecho por error.
-Si la extracción falla, se conserva el metadata anterior y se registra un warning: la
-memoria es auxiliar y no debe romper la petición.
+mensaje del cliente y la estimación recién generada, y devuelve un `ProjectMetadata`
+validado por Instructor/Pydantic (con límites: nombre de hasta 120 caracteres, equipo
+de 1 a 50 personas, alcance de hasta 2000 caracteres). El prompt vive en plantillas
+Jinja versionadas (`app/prompts/metadata_extraction/v1/`) y el modelo se configura
+con `METADATA_EXTRACTOR_MODEL`: si coincide con `PRIMARY_MODEL` pasa por el Router (con
+fallback); si es otro, se llama directamente.
+
+La fusión con lo ya conocido se hace **en código** (`ProjectMetadata.merge_with`), no
+en el LLM: las tecnologías se unen sin duplicados y sin distinguir mayúsculas
+(`React` y `react` son la misma), y el resto de campos solo se sobrescriben si hay un
+valor nuevo, así el modelo no puede borrar un hecho por error. Por eso el prompt le
+pide devolver `null` ante la duda. Si la extracción falla, se conserva el metadata
+anterior y se registra un warning: la memoria es auxiliar y no debe romper la petición.
 
 Por qué un extractor LLM y no una heurística (regex): los hechos llegan en lenguaje
 natural libre ("el proyecto se llamará Atlas", "somos tres desarrolladores"), y un
 regex sobre la respuesta del modelo es frágil. El coste es una llamada pequeña extra
-por turno (máx. 500 tokens de salida).
+por turno (máx. 1000 tokens de salida).
 
 ### Estado
 
-Hecho: modelo de sesión, `POST /sessions` y `GET /sessions/{id}`, endpoint multipart
-con extracción de adjuntos y estimación con historial + `project_metadata`, bloque
-`<project_metadata>` en las plantillas v1 y v2, extractor, ventana configurable con
-`SESSION_MAX_TURNS`, manejo de errores (400/404/422/502) y cliente Streamlit adaptado.
-Los tests del render de `project_metadata` están en `tests/prompts/test_estimation_v2.py`.
-
-Pendiente (trabajo en curso):
-
-- Tests de integración de las sesiones con `pytest` y `httpx.AsyncClient`: dos
-  peticiones enlazadas que actualizan el `project_metadata`, una petición con PDF
-  adjunto y 8 turnos que verifican el límite de la ventana.
+Completo: modelo de sesión con `SessionStore` inyectable, `POST /sessions` y
+`GET /sessions/{id}`, endpoint multipart con extracción y recorte de adjuntos,
+estimación con historial + `project_metadata`, bloque `<project_metadata>` y reglas de
+conversación en las plantillas v1 y v2, extractor con prompt versionado y modelo
+propio, ventana configurable con `SESSION_MAX_TURNS`, manejo de errores
+(400/404/422/502), cliente Streamlit adaptado y tests de integración (ver abajo).
 
 Limitación conocida, heredada de `/estimate`: el validador de `EstimationResult`
 exige que los totales coincidan con la suma de las fases y el modelo a veces falla la
@@ -403,6 +422,13 @@ en código en lugar de pedírselos al modelo.
 La suite de tests (`pytest`) se ejecuta automáticamente en cada push/PR
 mediante GitHub Actions ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
+- `tests/test_sessions_*.py`: tests de integración de las sesiones con `TestClient`.
+  Un `FakeLLMWrapper` (en `tests/conftest.py`) sustituye al wrapper real vía
+  `dependency_overrides`, registra los `messages` de cada llamada y distingue la
+  estimación del extractor por `response_model`. Cubren: dos turnos enlazados que
+  actualizan el `project_metadata`; adjuntos PDF/Word cuyo texto llega al LLM y cambia
+  la estimación, pero no se arrastra por el historial; y 8 turnos con una ventana de 3
+  en los que el historial nunca supera el límite mientras la memoria sobrevive.
 - `tests/test_structure.py`: existencia de ficheros/carpetas esperados y
   que los módulos de la app son importables.
 - `tests/test_api.py`: levanta la app con `TestClient` y valida el flujo

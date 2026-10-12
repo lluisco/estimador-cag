@@ -1,0 +1,26 @@
+<previous_metadata>
+{% if previous_is_empty %}
+(empty: this is the first turn)
+{% else %}
+- project_name: {{ previous.project_name or "null" }}
+- assumed_team_size: {{ previous.assumed_team_size or "null" }}
+- mentioned_technologies: {{ previous.mentioned_technologies | join(", ") if previous.mentioned_technologies else "none" }}
+- agreed_scope: {{ previous.agreed_scope or "null" }}
+{% endif %}
+</previous_metadata>
+
+<latest_client_message>
+{{ transcript }}
+</latest_client_message>
+
+<latest_estimation>
+summary: {{ result.summary }}
+total_duration_weeks: {{ result.total_duration_weeks }}
+total_cost_eur: {{ result.total_cost_eur }}
+phases:
+{% for phase in result.phases %}
+- {{ phase.name }} ({{ phase.duration_weeks }} weeks, {{ phase.cost_eur }} EUR)
+{% endfor %}
+</latest_estimation>
+
+Extract the ProjectMetadata for this turn. Return null or empty for any field you cannot ground in the client message or the estimation above.
