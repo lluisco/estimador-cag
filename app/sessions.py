@@ -68,15 +68,18 @@ class ConversationHistory:
 
     def __init__(self, max_turns: int = MAX_TURNS):
         self.max_turns = max_turns
+        self.summary: str | None = None
+        self.anchors: list[dict] = []
         self._messages: list[dict] = []
 
     def add_turn(self, user_message: str, assistant_message: str) -> None:
         self._messages.append({"role": "user", "content": user_message})
         self._messages.append({"role": "assistant", "content": assistant_message})
-        # cada turno son 2 mensajes: descartamos los pares más antiguos
-        excess = len(self._messages) - self.max_turns * 2
-        if excess > 0:
-            del self._messages[:excess]
+
+    def pop_oldest_turn(self) -> tuple[dict, dict]:
+        user, assistant = self._messages[0], self._messages[1]
+        del self._messages[:2]
+        return user, assistant
 
     @property
     def turns(self) -> int:
@@ -87,7 +90,11 @@ class ConversationHistory:
         return list(self._messages)
 
     def to_messages_list(self, system_prompt: str, new_user_message: str | None = None) -> list[dict]:
-        messages = [{"role": "system", "content": system_prompt}, *self._messages]
+        messages = [
+            {"role": "system", "content": system_prompt},
+            *self.anchors,
+            *self._messages
+        ]
         if new_user_message is not None:
             messages.append({"role": "user", "content": new_user_message})
         return messages
