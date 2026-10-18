@@ -3,6 +3,7 @@ from fastapi.concurrency import run_in_threadpool
 from instructor.core import IncompleteOutputException, InstructorRetryException
 from pydantic import BaseModel
 
+from app.config import settings
 from app.guardrails.input import InputGuardrailViolation
 from app.schemas import DetailLevel, EstimationRequest, EstimationResponse, OutputFormat, ProjectType, PromptVersion
 from app.services.attachments import UnsupportedAttachment, build_transcript
@@ -20,6 +21,13 @@ class SessionCreated(BaseModel):
     session_id: str
 
 
+class SessionMemory(BaseModel):
+    """Contenido de la memoria de la sesión. Puede incluir datos del cliente."""
+
+    summary: str
+    anchors: list[str]    # texto de los mensajes de usuario anclados
+
+
 class SessionState(BaseModel):
     session_id: str
     turns: int
@@ -29,6 +37,15 @@ class SessionState(BaseModel):
     last_tier_rule: str | None
     anchors: int          # turnos anclados (pares user/assistant que nunca se expulsan)
     summary_chars: int    # longitud del resumen acumulativo; 0 si aún no hay
+    last_turn: dict | None = None        # último turn_observed (ids y contadores)
+    memory: SessionMemory | None = None  # solo con EXPOSE_SESSION_DEBUG
+
+
+def _memory_snapshot(session: Session) -> SessionMemory:
+    return SessionMemory(
+        summary=session.history.summary or "",
+        anchors=[m["content"] for m in session.history.anchors if m["role"] == "user"],
+    )
 
 
 def _get_or_404(store: SessionStore, session_id: str) -> Session:
@@ -56,6 +73,8 @@ def read_session(session_id: str, store: SessionStore = Depends(get_session_stor
         last_tier_rule=session.last_tier_rule,
         anchors=len(session.history.anchors) // 2,
         summary_chars=len(session.history.summary or ""),
+        last_turn=session.last_turn,
+        memory=_memory_snapshot(session) if settings.EXPOSE_SESSION_DEBUG else None,
     )
 
 

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "info"
 
     SESSION_MAX_TURNS: int = 6
+    # Debug: GET /sessions/{id} devuelve también el texto del resumen y de las anclas.
+    # Apagado por defecto: ese contenido puede incluir datos del cliente.
+    EXPOSE_SESSION_DEBUG: bool = False
     # Tope de caracteres por adjunto: protege el presupuesto del prompt (el chunking llega con RAG).
     MAX_ATTACHMENT_CHARS: int = 60_000
     # Modelo de la segunda llamada por turno (extractor de project_metadata).

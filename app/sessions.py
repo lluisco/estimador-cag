@@ -112,7 +112,8 @@ class Session:
         self.project_metadata = ProjectMetadata()
         self.last_resolved_tier: str | None = None
         self.last_tier_rule: str | None = None
-
+        self.turn_count: int = 0          # monotónico: no lo afecta la ventana
+        self.last_turn: dict | None = None  # último evento turn_observed (solo ids y contadores)
 
 class SessionStore:
     """``session_id -> Session`` en memoria del proceso. Ver nota de volatilidad arriba.

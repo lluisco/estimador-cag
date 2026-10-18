@@ -14,6 +14,7 @@ from app.services.llm_wrapper import LLMWrapper
 from app.services.project_memory import update_project_metadata
 from app.services.summarizer import CumulativeSummarizer
 from app.services.tier import Tier, resolve_tier
+from app.services.usage_meter import MeteredLLM
 from app.sessions import Session
 
 log = structlog.get_logger()
@@ -42,7 +43,7 @@ def _commit_turn(
     result: EstimationResult,
     tier: Tier,
     tier_rule: str,
-    llm_wrapper: LLMWrapper,
+    llm_wrapper: LLMWrapper | MeteredLLM,
 ) -> None:
     """Único punto que muta la sesión, y solo con el resultado final del turno."""
     new_metadata = update_project_metadata(
@@ -59,6 +60,7 @@ def _commit_turn(
         _history_assistant_text(result),
     )
     session.project_metadata = new_metadata
+    session.turn_count += 1
     session.last_resolved_tier = tier.value
     session.last_tier_rule = tier_rule
 
@@ -98,19 +100,46 @@ def generate_session_estimation(
 
     tier, tier_rule = resolve_tier(request.description, session.project_metadata, tier_override)
 
+    # suma el consumo de las 2-3 llamadas del turno (estimación, metadata, resumen)
+    meter = MeteredLLM(llm_wrapper)
+
     system_prompt, user_prompt = render_estimation_prompt(
         request, version, project_metadata=session.project_metadata, tier=tier
     )
     messages = session.history.to_messages_list(system_prompt, user_prompt)
 
-    response = llm_wrapper.complete_structured(
+    response = meter.complete_structured(
         messages=messages,
         max_tokens=settings.ESTIMATION_MAX_TOKENS,
         response_model=EstimationResult,
     )
     result = enforce_scope_response(response.parsed)
 
-    _commit_turn(session, request, transcript, attachment_names, result, tier, tier_rule, llm_wrapper)
+    _commit_turn(session, request, transcript, attachment_names, result, tier, tier_rule, meter)
+
+    # evento agregado: una fila por turno para el CSV del stress test.
+    # Se emite tras _commit_turn para leer el estado ya comprimido.
+    u = meter.usage
+    observed = dict(
+        turn_index=session.turn_count,
+        session_id=session.session_id,
+        enriched_transcript_chars=len(request.description),
+        # aproximado: incluye los marcadores "--- attachment ---" (~60 chars por adjunto)
+        attachments_total_chars=max(0, len(request.description) - len(transcript)),
+        messages_in_window=len(session.history.messages),
+        anchors_count=len(session.history.anchors) // 2,
+        summary_chars=len(session.history.summary or ""),
+        tokens_in=u.tokens_in,
+        tokens_out=u.tokens_out,
+        cost_usd=round(u.cost_usd, 6),
+        latency_ms=u.latency_ms,
+        cache_hit_kind="none",  # el camino de sesiones no usa EstimationCache
+        last_resolved_tier=tier.value,
+        llm_calls=u.calls,
+        unpriced_calls=u.unpriced_calls,
+    )
+    session.last_turn = observed
+    log.info("turn_observed", **observed)
 
     return EstimationOutput(
         result=result,
