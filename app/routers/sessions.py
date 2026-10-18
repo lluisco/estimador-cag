@@ -9,6 +9,7 @@ from app.services.attachments import UnsupportedAttachment, build_transcript
 from app.services.llm_service import get_llm_wrapper
 from app.services.llm_wrapper import LLMWrapper
 from app.services.session_service import generate_session_estimation
+from app.services.tier import Tier
 from app.sessions import ProjectMetadata, Session, SessionStore, get_session_store
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
@@ -23,6 +24,8 @@ class SessionState(BaseModel):
     turns: int
     max_turns: int
     project_metadata: ProjectMetadata
+    last_resolved_tier: str | None
+    last_tier_rule: str | None
 
 
 def _get_or_404(store: SessionStore, session_id: str) -> Session:
@@ -46,6 +49,8 @@ def read_session(session_id: str, store: SessionStore = Depends(get_session_stor
         turns=session.history.turns,
         max_turns=session.history.max_turns,
         project_metadata=session.project_metadata,
+        last_resolved_tier=session.last_resolved_tier,
+        last_tier_rule=session.last_tier_rule,
     )
 
 
@@ -56,7 +61,8 @@ async def estimate_in_session(
     project_type: ProjectType = Form(ProjectType.WEB_SAAS),
     detail_level: DetailLevel = Form(DetailLevel.MEDIUM),
     output_format: OutputFormat = Form(OutputFormat.PHASES_TABLE),
-    prompt_version: PromptVersion = Form(PromptVersion.V2),
+    prompt_version: PromptVersion = Form(PromptVersion.V3),
+    tier: Tier | None = Form(None),
     attachments: list[UploadFile] = File(default=[]),
     store: SessionStore = Depends(get_session_store),
     llm_wrapper: LLMWrapper = Depends(get_llm_wrapper),
@@ -80,7 +86,7 @@ async def estimate_in_session(
     try:
         output = await run_in_threadpool(
             generate_session_estimation, session, request, transcript,
-            [f.filename for f in attachments], prompt_version,
+            [f.filename for f in attachments], prompt_version, tier,
             llm_wrapper=llm_wrapper,
         )
     except InputGuardrailViolation as e:

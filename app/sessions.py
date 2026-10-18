@@ -90,6 +90,11 @@ class ConversationHistory:
         return list(self._messages)
 
     def to_messages_list(self, system_prompt: str, new_user_message: str | None = None) -> list[dict]:
+        if self.summary:
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                f"<conversation_summary>\n{self.summary}\n</conversation_summary>"
+            )
         messages = [
             {"role": "system", "content": system_prompt},
             *self.anchors,
@@ -105,6 +110,8 @@ class Session:
         self.session_id = session_id
         self.history = ConversationHistory(max_turns)
         self.project_metadata = ProjectMetadata()
+        self.last_resolved_tier: str | None = None
+        self.last_tier_rule: str | None = None
 
 
 class SessionStore:

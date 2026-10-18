@@ -5,9 +5,13 @@ from app.guardrails.input import validate_input
 from app.guardrails.output import enforce_scope_response
 from app.prompts.loader import render_estimation_prompt
 from app.schemas import EstimationRequest, EstimationResult, PromptVersion
+from app.services.anchors import AnchorDetector
+from app.services.compression import CompressionPolicy
 from app.services.llm_service import EstimationOutput
 from app.services.llm_wrapper import LLMWrapper
 from app.services.project_memory import update_project_metadata
+from app.services.summarizer import CumulativeSummarizer
+from app.services.tier import Tier, resolve_tier
 from app.sessions import Session
 
 log = structlog.get_logger()
@@ -34,14 +38,17 @@ def generate_session_estimation(
     transcript: str,              # solo lo que escribió el cliente
     attachment_names: list[str],
     version: PromptVersion = PromptVersion.V2,
+    tier_override: Tier | None = None,
     *,
     llm_wrapper: LLMWrapper,
 ) -> EstimationOutput:
     # los adjuntos son input no confiable: se validan junto con el transcript
     validate_input(request.description)
 
+    tier, tier_rule = resolve_tier(request.description, session.project_metadata, tier_override)
+
     system_prompt, user_prompt = render_estimation_prompt(
-        request, version, project_metadata=session.project_metadata
+        request, version, project_metadata=session.project_metadata, tier=tier
     )
     messages = session.history.to_messages_list(system_prompt, user_prompt)
 
@@ -66,6 +73,14 @@ def generate_session_estimation(
         _history_assistant_text(result),
     )
     session.project_metadata = new_metadata
+    session.last_resolved_tier = tier.value
+    session.last_tier_rule = tier_rule
+
+    policy = CompressionPolicy(
+        AnchorDetector(),
+        CumulativeSummarizer(llm_wrapper, settings.COMPRESSION_MODEL),
+    )
+    policy.apply(session.history)
 
     # solo ids y contadores: el contenido incluye datos del cliente
     log.info(

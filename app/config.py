@@ -38,5 +38,8 @@ class Settings(BaseSettings):
     # Modelo de la segunda llamada por turno (extractor de project_metadata).
     METADATA_EXTRACTOR_MODEL: str = "openai/gpt-4o-mini"
 
+    # Modelo utilizado para la compresión de conversaciones.
+    COMPRESSION_MODEL: str = "openai/gpt-4o-mini"
+
 
 settings = Settings()

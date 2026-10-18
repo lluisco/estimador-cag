@@ -33,6 +33,7 @@ def render_estimation_prompt(
     request: EstimationRequest, 
     version: PromptVersion = PromptVersion.V1,
     project_metadata: ProjectMetadata | None = None,
+    tier: str | None = None,
 ) -> tuple[str, str]:
     version = PromptVersion(version).value
     context = {
@@ -44,6 +45,7 @@ def render_estimation_prompt(
         "out_of_scope_prefix": OUT_OF_SCOPE_PREFIX,
         "low_confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
         "project_metadata": (project_metadata or ProjectMetadata()).model_dump(),
+        "tier": str(tier) if tier else "default"
     }
 
     system = _env.get_template(f"estimation/{version}/system.j2").render(context)
@@ -78,4 +80,17 @@ def render_metadata_extraction_prompt(
     }
     system = _env.get_template(f"metadata_extraction/{version}/system.j2").render(context)
     user = _env.get_template(f"metadata_extraction/{version}/user.j2").render(context)
+    return system, user
+
+def render_conversation_summary_prompts(
+    previous: str | None,
+    turns: list[tuple[dict, dict]],
+    version: str = "v1",
+) -> tuple[str, str]:
+    context = {
+        "previous_summary": previous or "",
+        "turns": [{"user": u["content"], "assistant": a["content"]} for u, a in turns],
+    }
+    system = _env.get_template(f"conversation_summary/{version}/system.j2").render(context)
+    user = _env.get_template(f"conversation_summary/{version}/user.j2").render(context)
     return system, user

@@ -9,6 +9,7 @@ from app.main import app
 from app.schemas import EstimationResult, Phase
 from app.services.llm_service import get_llm_wrapper
 from app.services.llm_wrapper import LLMStructuredResponse
+from app.services.summarizer import ConversationSummary
 from app.sessions import ProjectMetadata, SessionStore, get_session_store
 
 
@@ -41,6 +42,8 @@ class FakeLLMWrapper:
         self.calls: list[dict] = []
         self.metadata_queue: list[ProjectMetadata] = []
         self.metadata_error: Exception | None = None
+        self.summary_error: Exception | None = None
+        self._summary_count = 0
         self.estimation_factory: Callable[[list[dict]], EstimationResult] = lambda _: make_canned_result()
 
     def complete_structured(
@@ -60,6 +63,11 @@ class FakeLLMWrapper:
             if self.metadata_error is not None:
                 raise self.metadata_error
             parsed = self.metadata_queue.pop(0) if self.metadata_queue else ProjectMetadata()
+        elif response_model is ConversationSummary:
+            if self.summary_error is not None:
+                raise self.summary_error
+            self._summary_count += 1
+            parsed = ConversationSummary(summary=f"RESUMEN-{self._summary_count}")
         else:
             raise AssertionError(f"response_model inesperado: {response_model.__name__}")
 

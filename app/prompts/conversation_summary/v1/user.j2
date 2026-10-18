@@ -1,0 +1,10 @@
+<previous_summary>
+{{ previous_summary or "(vacío)" }}
+</previous_summary>
+
+<expelled_turns>
+{% for turn in turns %}
+Cliente: {{ turn.user }}
+Estimador: {{ turn.assistant }}
+{% endfor %}
+</expelled_turns>
