@@ -38,6 +38,17 @@ def test_every_prompt_version_has_its_templates():
     assert not missing, f"Faltan templates para versiones declaradas: {missing}"
 
 
+def test_auxiliary_prompts_have_their_templates():
+    # prompts de las llamadas auxiliares de la sesión: resumidor y Critic
+    expected = [
+        f"app/prompts/{name}/v1/{part}"
+        for name in ("metadata_extraction", "conversation_summary", "critic")
+        for part in ("system.j2", "user.j2")
+    ] + ["app/prompts/estimation/_critic_feedback.j2"]
+    missing = [f for f in expected if not (ROOT / f).is_file()]
+    assert not missing, f"Faltan templates auxiliares: {missing}"
+
+
 def test_app_package_is_importable():
     import app.main  # noqa: F401
     import app.services.llm_service  # noqa: F401

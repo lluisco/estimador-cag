@@ -61,10 +61,10 @@ def test_metadata_survives_turns_that_leave_the_window(conversational_client, fa
     assert "Turno 1:" not in conversation                            # fuera del historial...
     assert "- Project name: Atlas" in last[0]["content"]             # ...pero vivo en la memoria
 
-def test_nda_in_turn_one_survives_literally_to_turn_eight(conversational_client, fake_wrapper):
+def test_nda_in_turn_one_survives_literally_to_turn_ten(conversational_client, fake_wrapper):
     session_id = new_session(conversational_client)
     estimate(conversational_client, session_id, "Turno 1: firmamos un NDA con el cliente")
-    for turn in range(2, 9):
+    for turn in range(2, 11):
         estimate(conversational_client, session_id, f"Turno {turn}: refinamos la app de reservas")
 
     last = fake_wrapper.calls_for("EstimationResult")[-1]["messages"]
@@ -75,3 +75,7 @@ def test_nda_in_turn_one_survives_literally_to_turn_eight(conversational_client,
     assert not any("Turno 2:" in m["content"] for m in rest)       # el resto salió de la ventana
     # system + anclas (2) + ventana (2*MAX) + mensaje nuevo
     assert len(last) <= 1 + 2 + 2 * MAX_TURNS + 1
+
+    state = conversational_client.get(f"/api/v1/sessions/{session_id}").json()
+    assert state["anchors"] == 1
+    assert state["summary_chars"] > 0

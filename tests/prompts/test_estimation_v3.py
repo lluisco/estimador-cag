@@ -1,7 +1,6 @@
 import pytest
 from app.prompts.loader import render_estimation_prompt
 from app.schemas import DetailLevel, EstimationRequest, OutputFormat, ProjectType, PromptVersion
-from app.services import tier
 from tests.prompts.test_estimation_v1 import DESCRIPTION
 
 MARKERS = {
@@ -49,3 +48,15 @@ def test_v1_and_v2_ignore_the_tier(request_fixture):
     for v in (PromptVersion.V1, PromptVersion.V2):
         system, _ = render_estimation_prompt(request_fixture, v, tier="executive")
         assert "<audience" not in system
+
+
+def test_v3_tells_the_model_not_to_refuse_partial_definitions(request_fixture):
+    system, _ = render_estimation_prompt(request_fixture, PromptVersion.V3)
+    assert "<partial_definition>" in system
+    assert "no lower than 50" in system                              # el umbral viene de la constante
+
+
+def test_v1_and_v2_keep_their_refusal_rules_unchanged(request_fixture):
+    for v in (PromptVersion.V1, PromptVersion.V2):
+        system, _ = render_estimation_prompt(request_fixture, v)
+        assert "<partial_definition>" not in system

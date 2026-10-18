@@ -41,5 +41,10 @@ class Settings(BaseSettings):
     # Modelo utilizado para la compresión de conversaciones.
     COMPRESSION_MODEL: str = "openai/gpt-4o-mini"
 
+    # Modelo del Critic (auditor de la estimación en el flujo ACB).
+    CRITIC_MODEL: str = "openai/gpt-4o-mini"
+    # Iteraciones máximas del bucle ACB (cada una: 1 llamada al actor + 1 al critic).
+    BOSS_MAX_ITERATIONS: int = 3
+
 
 settings = Settings()

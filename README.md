@@ -45,28 +45,40 @@ app/
 ├── context/
 │   └── examples.py            # Ejemplos históricos usados en los templates (CAG)
 ├── prompts/
-│   ├── loader.py               # render_estimation_prompt / render_metadata_extraction_prompt vía Jinja2
+│   ├── loader.py               # render_* de estimación, extractor, resumen y Critic vía Jinja2
 │   ├── metadata_extraction/
 │   │   └── v1/                 # system.j2 + user.j2 del extractor de project_metadata
+│   ├── conversation_summary/
+│   │   └── v1/                 # system.j2 + user.j2 del resumen acumulativo (en español)
+│   ├── critic/
+│   │   └── v1/                 # system.j2 + user.j2 del Critic (flujo ACB)
 │   └── estimation/
 │       ├── _rates.j2           # Tarifas por rol (compartido por todas las versiones)
 │       ├── _response_spec.j2   # Estructura de salida, formato y detalle (compartido)
+│       ├── _critic_feedback.j2 # Bloque <critic_feedback> que se añade al user prompt en ACB
 │       ├── v1/
 │       │   ├── system.j2       # Rol y reglas; incluye _response_spec.j2
 │       │   ├── user.j2         # Wrapper de la descripción del proyecto
 │       │   └── examples.j2     # Ejemplos few-shot incluidos en system.j2
-│       └── v2/                 # Igual que v1 + tono ejecutivo (ver "Prompts versionados")
+│       ├── v2/                 # Igual que v1 + tono ejecutivo (ver "Prompts versionados")
+│       └── v3/                 # Igual que v1 + bloque <audience> según el tier resuelto
 ├── sessions.py                # Estado conversacional: ConversationHistory, ProjectMetadata, Session
 ├── routers/
 │   ├── estimations.py         # Endpoint POST /api/v1/estimate
-│   └── sessions.py            # POST /api/v1/sessions y /sessions/{id}/estimate (multipart)
+│   └── sessions.py            # POST /sessions, /sessions/{id}/estimate y /estimate-acb (multipart)
 └── services/
     ├── llm_service.py         # Orquesta cache + llamada al LLM
     ├── llm_wrapper.py         # litellm.Router (primario + fallback) + Instructor (salida estructurada)
     ├── cache.py                # Cache exact-match en Redis (degrada sin bloquear si no hay Redis)
     ├── attachments.py         # Extracción de texto de PDF/Word (pypdf, python-docx)
     ├── project_memory.py      # Extractor LLM que actualiza el project_metadata de la sesión
-    └── session_service.py     # Estimación dentro de una sesión: historial + metadata + LLM
+    ├── anchors.py             # AnchorDetector: ¿el mensaje del cliente es un compromiso duradero?
+    ├── summarizer.py          # CumulativeSummarizer: resumen acumulativo de los turnos expulsados
+    ├── compression.py         # CompressionPolicy: decide qué se ancla, qué se resume y qué se olvida
+    ├── tier.py                # resolve_tier: tier de audiencia por reglas deterministas
+    ├── critic.py              # CriticFeedback (schema) + Critic (auditor sin estado)
+    ├── boss.py                # Boss: máquina de estados sin LLM + BossTrace
+    └── session_service.py     # Turno de sesión (normal y ACB): tier + LLM + commit atómico
 streamlit_app.py                # Formulario web (Streamlit) sobre la API
 docs/
 └── transcripcion_ejemplo.md   # Transcripción de ejemplo para inspirar una descripción
@@ -74,7 +86,14 @@ tests/
 ├── conftest.py                # FakeLLMWrapper + fixtures de sesiones (TestClient + dependency_overrides)
 ├── test_sessions_metadata.py  # project_metadata entre turnos, extractor y fusión
 ├── test_sessions_attachments.py # Adjuntos PDF/Word: llegan al LLM, influyen y no se arrastran
-├── test_sessions_window.py    # La ventana acota el historial; la memoria sobrevive
+├── test_sessions_window.py    # La ventana acota el historial; el NDA del turno 1 sigue literal en el 10
+├── test_sessions_tier.py      # El tier llega al prompt y se expone en GET /sessions/{id}
+├── test_sessions_acb.py       # /estimate-acb: traza, feedback al actor, solo el final en la sesión
+├── test_anchors.py            # Detector de anclas: positivos y negativos en español
+├── test_compression.py        # Política de compresión y resumidor (sin LLM real)
+├── test_tier.py               # Cada regla, precedencia y override
+├── test_critic.py             # Schema del CriticFeedback y fallback del Critic
+├── test_boss.py               # Boss con actor y critic de mentira, sin LLM
 ├── test_structure.py          # Valida que la estructura de carpetas es correcta
 ├── test_api.py                # Valida el flujo completo del endpoint (mockeando el LLM)
 ├── test_schemas.py            # Valida EstimationResult/Phase (totales, límites, costes > 0)
@@ -83,6 +102,7 @@ tests/
 └── prompts/
     ├── test_estimation_v1.py  # Valida el render de los templates (sin LLM, milisegundos)
     ├── test_estimation_v2.py  # Valida la variación de v2 frente a v1
+    ├── test_estimation_v3.py  # Cada tier pinta solo su bloque <audience>
     └── test_hourly_rates.py   # Valida que las tarifas por rol llegan a los prompts
 .github/workflows/ci.yml       # Pipeline que ejecuta los tests automáticamente
 ```
@@ -113,6 +133,9 @@ tests/
    | `SESSION_MAX_TURNS`               | Turnos que conserva la ventana deslizante del historial de una sesión (6 por defecto) |
    | `MAX_ATTACHMENT_CHARS`            | Caracteres que se conservan de cada adjunto (60.000 por defecto) |
    | `METADATA_EXTRACTOR_MODEL`        | Modelo del extractor de `project_metadata` (por defecto el mismo que `PRIMARY_MODEL`) |
+   | `COMPRESSION_MODEL`               | Modelo que escribe el resumen acumulativo de los turnos expulsados |
+   | `CRITIC_MODEL`                    | Modelo del Critic en `/estimate-acb` |
+   | `BOSS_MAX_ITERATIONS`             | Vueltas máximas actor + critic por turno ACB (3 por defecto) |
    | `HOURLY_RATES_EUR`                | Tarifa EUR/hora por rol, en JSON (ver abajo)  |
 
    Las tarifas por defecto son `developer` 60, `project_manager` 60, `ux_ui` 50
@@ -216,7 +239,10 @@ Se abre en `http://localhost:8501`. Al cargar la página crea una sesión
 (`POST /sessions`) y guarda el `session_id` en `st.session_state`. El formulario
 pide la transcripción (o la nueva información del cliente), un selector múltiple
 de adjuntos (PDF y Word), el tipo de proyecto, el nivel de detalle y el formato de
-salida. Al enviarlo hace un `POST /sessions/{id}/estimate` multipart y después un
+salida, más un selector de **audiencia (tier)** con la opción "Automático" (no envía
+el campo y el servidor decide por reglas) y un interruptor **Revisión independiente
+(ACB)** que decide qué endpoint se llama. Al enviarlo hace un `POST
+/sessions/{id}/estimate` (o `/estimate-acb`) multipart y después un
 `GET /sessions/{id}` para refrescar el panel lateral. No hay hilo de chat: cada
 envío reemplaza la estimación mostrada, y la continuidad la aporta la sesión.
 Muestra el resumen, la duración, el coste y la confianza totales, la tabla de
@@ -226,8 +252,12 @@ El panel lateral muestra:
 
 - el `session_id`, el número de turnos del historial y un botón **Nueva
   conversación** que crea una sesión nueva y limpia el estado;
+- el **tier** del último turno y la regla que lo decidió, p. ej. `executive (nda_detected)`;
+- el número de **anclas** y la longitud del **resumen acumulativo**;
 - la **memoria del proyecto** (`project_metadata`) en JSON, para ver cómo se
   acumulan los hechos entre turnos;
+- tras un turno ACB, un desplegable con la **traza**: veredicto, confianza de la
+  revisión y principales issues de cada vuelta;
 - el resultado de la última llamada: modelo, tokens, si se sirvió desde cache, y
   el `system prompt` real que se envió al LLM.
 
@@ -258,6 +288,7 @@ prefijo `Risk:`) van dentro de los `assumptions` de cada fase.
 |---------|----------------------------------|
 | `v1`    | Versión base: asistente experto, tono neutro. |
 | `v2`    | Única variación deliberada: **tono ejecutivo** dirigido a un decisor no técnico (consultor senior, resumen ejecutivo inicial, frases cortas, sin jerga). Reglas, formatos, nivel de detalle, ejemplos, `user.j2` y el bloque `<project_metadata>` son idénticos a v1, para que cualquier diferencia en la salida sea atribuible al tono. |
+| `v3`    | Generaliza v2: es **v1 + un bloque `<audience>`** que cambia según el tier resuelto (`executive`: riesgos primero, 3-4 fases, sin jerga, supuestos en términos de negocio; `pm`: hitos y dependencias; `developer`: stack, integraciones y supuestos técnicos verificables; `default`: sin bloque, idéntico a v1). Va al final del system, junto a `<project_metadata>`, para no romper el prefijo cacheable. Además añade un bloque `<partial_definition>`: ante una propuesta con el alcance a medio definir (p. ej. que propone una fase de definición antes de desarrollar), estima esa fase y un MVP orientativo con confianza no inferior al umbral, en vez de responder `OUT OF SCOPE:`. Es la versión por defecto de las sesiones; `/estimate` sigue usando v1/v2, que conservan su regla de rechazo original. |
 
 Para añadir una versión nueva: crea `app/prompts/estimation/vN/` con
 `system.j2`, `user.j2` y `examples.j2`, y añade `VN = "vN"` a `PromptVersion`
@@ -279,15 +310,25 @@ curl -X POST http://localhost:8000/api/v1/sessions/<session_id>/estimate \
   -F "transcript=Quiero una app de reservas para mi academia" \
   -F "attachments=@spec.pdf" -F "attachments=@propuesta.docx"
 
-# 3. consultar el estado de la sesión (turnos y project_metadata)
+# 3. lo mismo con revisión Actor-Critic-Boss (mismo contrato multipart)
+curl -X POST http://localhost:8000/api/v1/sessions/<session_id>/estimate-acb \
+  -F "transcript=Firmamos un NDA; el presupuesto está cerrado en 40.000 €"
+
+# 4. consultar el estado de la sesión
 curl http://localhost:8000/api/v1/sessions/<session_id>
 ```
 
-Campos del formulario de `/sessions/{id}/estimate`: `transcript` (obligatorio),
-`attachments` (opcional, varios), y los parámetros tipados `project_type`,
-`detail_level`, `output_format` y `prompt_version`, todos con valor por defecto
-(`web_saas`, `medium`, `phases_table` y `v2`). La respuesta respeta el mismo
-schema `EstimationResponse` que `/estimate`.
+Campos del formulario de `/sessions/{id}/estimate` y `/estimate-acb`: `transcript`
+(obligatorio), `attachments` (opcional, varios), y los parámetros tipados
+`project_type`, `detail_level`, `output_format`, `prompt_version` y `tier`, con valor
+por defecto (`web_saas`, `medium`, `phases_table`, `v3` y automático). `tier` acepta
+`executive`, `pm`, `developer` o `default`; cualquier otro valor da `422`. La
+respuesta de `/estimate` respeta el schema `EstimationResponse`; la de
+`/estimate-acb` lo extiende con un campo `acb` (la `BossTrace`).
+
+`GET /sessions/{id}` devuelve `turns`, `max_turns`, `project_metadata`,
+`last_resolved_tier`, `last_tier_rule`, `anchors` (turnos anclados) y
+`summary_chars` (longitud del resumen acumulativo).
 
 Códigos de error:
 
@@ -303,20 +344,63 @@ aquí: la transcripción más el texto de los adjuntos puede superarlo. El `Form
 la transcripción (20-80.000 caracteres) y el endpoint construye el `EstimationRequest`
 con `model_construct`, sin revalidar, con el texto completo.
 
-### Historial frente a memoria
+### Tres memorias, tres políticas de olvido
 
-Son dos cosas distintas y viven separadas en [`app/sessions.py`](app/sessions.py):
+La ventana deslizante sola olvida a ciegas: en el turno 8, lo dicho en el turno 1
+solo sobreviviría si el extractor lo hubiera metido en `project_metadata`, que tiene
+cuatro campos. Un "firmamos un NDA" o un "el presupuesto está cerrado en 40.000 €"
+desaparecería. Por eso, además de la ventana reciente, hay tres memorias distintas:
 
-| | Historial | Memoria (`project_metadata`) |
-|---|---|---|
-| Qué es | El array `messages` que viaja a la API en cada llamada | Hechos del proyecto: nombre, equipo asumido, tecnologías, alcance acordado |
-| Duración | Ventana deslizante: solo los últimos `MAX_TURNS` (6) turnos (par user+assistant) | Se acumula durante toda la sesión |
-| Dónde va al LLM | Como mensajes user/assistant | Dentro del system prompt, en el bloque `<project_metadata>` |
+| | `project_metadata` | Resumen | Anclas |
+|---|---|---|---|
+| Qué es | Campos estructurados (nombre, equipo, tecnologías, alcance) | Prosa en español que comprime los turnos viejos | Pares user/assistant **literales** |
+| Política de olvido | Se **sobrescribe** campo a campo (fusión en código) | Se **reescribe** entero en cada compresión | **Nunca** se toca |
+| Quién escribe | Extractor LLM + `merge_with` | `CumulativeSummarizer` (LLM) | `AnchorDetector` (regex, sin LLM) |
+| Dónde va al LLM | Bloque `<project_metadata>` del system | Bloque `<conversation_summary>` del system | Mensajes user/assistant, antes de la ventana |
+
+La **ventana reciente** son los últimos `SESSION_MAX_TURNS` turnos, tal cual. El
+array que llega al LLM tiene siempre esta forma y nunca la supera:
+
+    [system (+ project_metadata + resumen)] + anclas + ventana reciente + mensaje nuevo
 
 El system prompt **no se guarda en el historial**: se regenera en cada turno a
-partir del `project_metadata` actual, de modo que la ventana nunca puede
-descartarlo. Cuando un turno antiguo sale de la ventana, sus hechos siguen
-disponibles porque ya están en el `project_metadata`.
+partir del `project_metadata` y del resumen actuales, de modo que la ventana nunca
+puede descartarlo.
+
+**Datos separados de la política.** `ConversationHistory` solo guarda (`summary`,
+`anchors`, ventana) y `add_turn` solo añade. Quien decide qué se olvida es
+[`CompressionPolicy.apply`](app/services/compression.py), que se ejecuta tras cada
+turno: mientras haya más de `max_turns` pares, saca el más antiguo; si el mensaje del
+cliente es un ancla, el par entero va a `anchors`, y si no, se encola. Al final hace
+**una sola** llamada al resumidor con todo lo expulsado, aunque sean varios turnos. Es
+idempotente: aplicarla dos veces seguidas no cambia nada. Así hay un único punto que
+decide qué se borra.
+
+**Detección de anclas.** [`AnchorDetector`](app/services/anchors.py) es heurístico
+(regex en español, sin LLM, determinista): NDA o acuerdo de confidencialidad, contrato
+firmado, alcance cerrado o congelado, presupuesto cerrado o con tope, regulación
+(RGPD, GDPR, HIPAA, ISO 27001, ENS), fecha innegociable y "nos comprometimos a". Es
+**conservador a propósito**: un falso negativo solo manda el turno al resumen, pero un
+falso positivo lo deja en el prompt para siempre, porque las anclas no se expulsan.
+Limitación conocida: una regex no entiende la negación, y "no hay NDA" también
+dispara. Un clasificador LLM con fallback al heurístico lo resolvería, a costa de una
+llamada más por turno. Tampoco hay tope de anclas: si el cliente repite el mismo
+compromiso en varios turnos, se anclan todos.
+
+**Dónde va el resumen: en el system prompt, no como mensaje `user`.** La alternativa
+es inyectarlo como un mensaje `user` sintético al principio. Se descartó por tres
+razones: sin anclas produce dos mensajes `user` seguidos (el resumen y el primer turno
+de la ventana), que algunos proveedores rechazan o fusionan; presenta como dicho por
+el cliente algo que escribió el sistema; y el system ya se regenera en cada turno con
+el `project_metadata`, así que es el sitio natural para el contexto de fondo. El
+coste: el system cambia cuando se comprime, lo que invalida la caché del prompt en ese
+turno. Por eso el resumen va al final del system, detrás del metadata.
+
+**Si el resumidor falla**, se conserva el resumen anterior y se registra un warning.
+Los turnos expulsados en esa compresión se pierden, y es una decisión consciente:
+devolverlos a la ventana haría crecer el prompt sin límite si el modelo de compresión
+estuviera caído, y rompería la garantía de tamaño. Mejora futura: señalar al cliente
+que la memoria quedó degradada.
 
 **Qué se guarda en el historial.** Por cada turno, el mensaje del usuario se guarda
 con el transcript original más una nota `[Adjuntos: nombre.pdf]`, **sin** el texto de
@@ -325,9 +409,10 @@ mensaje del asistente se guarda como un resumen compacto: resumen, total de sema
 euros y nombres de fases. Los hechos de los documentos llegan al turno siguiente a
 través del `project_metadata`.
 
-**Tamaño de la ventana.** El historial guarda como máximo `MAX_TURNS` pares
-user+assistant, y el mensaje en curso viaja aparte: al LLM le llegan el system prompt,
-hasta `MAX_TURNS` pares previos y el mensaje nuevo. Se configura con la variable de
+**Tamaño de la ventana.** La ventana guarda como máximo `MAX_TURNS` pares
+user+assistant tras aplicar la política, y el mensaje en curso viaja aparte: al LLM le
+llegan el system prompt (con el resumen), las anclas, hasta `MAX_TURNS` pares previos
+y el mensaje nuevo. Se configura con la variable de
 entorno `SESSION_MAX_TURNS` (por defecto 6); [`app/sessions.py`](app/sessions.py) la
 lee en `MAX_TURNS`. Bajarla a 2 o 3 es la forma más rápida de ver la ventana en acción.
 
@@ -402,6 +487,83 @@ natural libre ("el proyecto se llamará Atlas", "somos tres desarrolladores"), y
 regex sobre la respuesta del modelo es frágil. El coste es una llamada pequeña extra
 por turno (máx. 1000 tokens de salida).
 
+### Tier de audiencia: por reglas, no por LLM
+
+[`resolve_tier(transcript, metadata, override)`](app/services/tier.py) devuelve
+`(tier, regla)`. El override de quien llama (campo `tier` del formulario) siempre
+gana; si no hay, gana la **primera** regla que se cumpla:
+
+| Orden | Regla | Tier |
+|---|---|---|
+| 1 | `nda_detected` | `executive` |
+| 2 | `regulation_detected` (RGPD, GDPR, HIPAA, ISO 27001, ENS) | `executive` |
+| 3 | `technical_language` (2 o más términos técnicos distintos) | `developer` |
+| 4 | `small_team` (equipo de 2 personas o menos) | `pm` |
+| - | `no_rule_matched` | `default` |
+
+**Por qué reglas y no un LLM.** Son explicables (el panel muestra
+"executive (nda_detected)"), deterministas (un test fija cada regla y la precedencia:
+un NDA gana a un equipo pequeño por estar antes en la tabla) y no cuestan una llamada.
+Una regla que lanza una excepción se registra y se salta, sin romper la petición.
+
+**Mira el metadata acumulado, no solo el último mensaje.** El texto que evalúan las
+reglas es el transcript (con adjuntos) más el `agreed_scope` y las tecnologías del
+`project_metadata`. Un NDA dicho en el turno 1 y guardado en `agreed_scope` sigue
+activando `executive` en el turno 5. Limitación: si el extractor no copia el NDA al
+metadata, el tier lo pierde aunque el turno siga en las anclas.
+
+El tier se guarda en la sesión con el resto de mutaciones, solo si el turno tiene
+éxito, y se expone en `GET /sessions/{id}` (`last_resolved_tier`, `last_tier_rule`).
+
+### Actor-Critic-Boss (`/estimate-acb`)
+
+Tres papeles separados: el **Actor** genera (la llamada de estimación de siempre), el
+**Critic** audita y el **Boss** decide.
+
+- **Critic** ([`app/services/critic.py`](app/services/critic.py)). Devuelve un
+  `CriticFeedback` con `verdict` (`accept`, `needs_iteration`, `reject`), `issues`
+  (categoría, severidad, `field_path` y descripción) y `confidence_in_review`. Los
+  validadores imponen coherencia: `needs_iteration` exige al menos una issue
+  `critical` o `major`, y `reject` exige al menos una issue. **Schema y no prosa**
+  porque el Boss decide leyendo campos; con texto libre habría que interpretarlo. Es
+  sin estado y, si falla, devuelve `accept` con confianza 0: la petición nunca se rompe
+  por el auditor, y la traza distingue "revisado" de "no se pudo revisar". Como
+  `EstimationResult` ya valida en código que los totales cuadran, un `math_error`
+  indicaría una regresión; el valor del Critic está en lo que Pydantic no ve: datos
+  inventados, alcance mal interpretado, fases desequilibradas y tono que no encaja con
+  el tier (por eso recibe el tier). Su prompt insiste en "ante la duda, minor" y "ante
+  la duda, accept": un Critic quisquilloso multiplica las llamadas sin mejorar nada.
+- **Boss** ([`app/services/boss.py`](app/services/boss.py)). Máquina de estados **sin
+  llamadas al LLM**: recibe `actor(feedback | None) -> EstimationResult` y
+  `critic(result) -> CriticFeedback` como funciones, y por eso se prueba entero con
+  dobles. Si el Critic acepta, devuelve el borrador; si pide iterar y quedan vueltas,
+  vuelve a llamar al actor con el feedback; si rechaza o se agotan las vueltas,
+  **sintetiza**: el último borrador con las advertencias del Critic delante del
+  resumen y la confianza reducida. La confianza nunca baja de
+  `LOW_CONFIDENCE_THRESHOLD` (50): por debajo, el validador de `EstimationResult`
+  exigiría el prefijo `OUT OF SCOPE:` y la síntesis sería incoherente. Por eso se usa
+  la constante y no un número fijo. Todo queda en una `BossTrace` (una entrada por
+  vuelta) que viaja en el campo `acb` de la respuesta.
+- **Actor.** Reconstruye el prompt en cada vuelta y añade el feedback del Critic en un
+  bloque `<critic_feedback>` al final del user prompt (parcial
+  `estimation/_critic_feedback.j2`, igual para todas las versiones, así v1 y v2 no se
+  tocan y el system no cambia).
+
+**Regla de sesión:** solo el resultado final se guarda en la sesión; los borradores
+intermedios se descartan. Para el usuario, un turno sigue siendo una respuesta.
+
+**Coste por turno.** Cada llamada añade latencia, y casi todas son secuenciales:
+
+| Flujo | Llamadas al LLM por turno |
+|---|---|
+| `/estimate` (sesión) | 1 estimación + 1 extractor (+ 1 resumidor si la ventana se desborda) = **2-3** |
+| `/estimate-acb`, mejor caso | 1 actor + 1 critic + 1 extractor (+ 1 resumidor) = **3-4** |
+| `/estimate-acb`, peor caso (`BOSS_MAX_ITERATIONS=3`) | 3 actor + 3 critic + 1 extractor + 1 resumidor = **hasta 8** |
+
+Por eso ACB es un endpoint aparte y no el comportamiento por defecto. Los tokens que
+devuelve la respuesta suman todas las llamadas del actor; los del Critic no se
+contabilizan todavía.
+
 ### Estado
 
 Completo: modelo de sesión con `SessionStore` inyectable, `POST /sessions` y
@@ -410,6 +572,9 @@ estimación con historial + `project_metadata`, bloque `<project_metadata>` y re
 conversación en las plantillas v1 y v2, extractor con prompt versionado y modelo
 propio, ventana configurable con `SESSION_MAX_TURNS`, manejo de errores
 (400/404/422/502), cliente Streamlit adaptado y tests de integración (ver abajo).
+Memoria híbrida (anclas, resumen acumulativo y `CompressionPolicy`), tier por reglas
+con plantilla v3, y flujo Actor-Critic-Boss en `/estimate-acb` con su traza en el
+cliente.
 
 Limitación conocida, heredada de `/estimate`: el validador de `EstimationResult`
 exige que los totales coincidan con la suma de las fases y el modelo a veces falla la

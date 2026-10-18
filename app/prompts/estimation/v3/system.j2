@@ -11,6 +11,15 @@ Rules:
 
 {% include "estimation/_response_spec.j2" %}
 
+<partial_definition>
+Clients often send proposals whose scope is only partly defined. Do not refuse them:
+- If the description proposes a discovery or definition phase before development, estimate that phase in detail (interviews, process inventory, functional proposal, integration architecture...).
+- Then estimate the MVP or the capabilities that are described, as a range-based first pass: state in the assumptions what is still undefined and how it could move the figures.
+- Use a confidence_pct no lower than {{ low_confidence_threshold }} for this kind of estimate, and explain in the summary that the development figures will be refined after the definition phase.
+- This is a real estimate, not a refusal: do NOT start its summary with "{{ out_of_scope_prefix }}" and do NOT use the placeholder phase.
+- Reserve "{{ out_of_scope_prefix }}" for descriptions where neither the work to be done nor its scope can be identified.
+</partial_definition>
+
 
 Below are previous estimates made by the consultancy.
 Use them as a reference for criteria, scope and effort; their layout is not the output format:

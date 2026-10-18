@@ -1,7 +1,7 @@
-import re
-
 """Detector de anclas (heurístico). Conservador a propósito: un falso positivo
 deja el turno en el prompt para siempre; un falso negativo solo lo manda al resumen."""
+
+import re
 
 _PATTERNS = [
     # --- confidencialidad ---

@@ -1,0 +1,36 @@
+<audience_tier>{{ tier }}</audience_tier>
+
+<project_metadata>
+{% if metadata.project_name %}
+- Project name: {{ metadata.project_name }}
+{% endif %}
+{% if metadata.assumed_team_size %}
+- Assumed team size: {{ metadata.assumed_team_size }}
+{% endif %}
+{% if metadata.mentioned_technologies %}
+- Technologies mentioned: {{ metadata.mentioned_technologies | join(", ") }}
+{% endif %}
+{% if metadata.agreed_scope %}
+- Agreed scope: {{ metadata.agreed_scope }}
+{% endif %}
+</project_metadata>
+
+<client_transcript>
+{{ transcript }}
+</client_transcript>
+
+<estimation_to_review>
+summary: {{ result.summary }}
+confidence_pct: {{ result.confidence_pct }}
+total_duration_weeks: {{ result.total_duration_weeks }}
+total_cost_eur: {{ result.total_cost_eur }}
+phases:
+{% for phase in result.phases %}
+- {{ phase.name }} ({{ phase.duration_weeks }} weeks, {{ phase.cost_eur }} EUR, confidence {{ phase.confidence_pct }}%)
+{% for a in phase.assumptions %}
+    * {{ a }}
+{% endfor %}
+{% endfor %}
+</estimation_to_review>
+
+Review the estimation above and return your CriticFeedback.

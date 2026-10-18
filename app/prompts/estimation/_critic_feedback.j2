@@ -1,0 +1,8 @@
+<critic_feedback>
+An independent reviewer audited your previous draft for this same request and found the issues below.
+Produce a new full estimation that fixes them, and keep everything the reviewer did not flag.
+Do not invent information to satisfy the reviewer: if an issue cannot be fixed with the information available, keep the estimate and state the gap in the assumptions of the affected phase.
+{% for issue in feedback.issues %}
+- [{{ issue.severity }}] {{ issue.category }} at {{ issue.field_path }}: {{ issue.description }}
+{% endfor %}
+</critic_feedback>

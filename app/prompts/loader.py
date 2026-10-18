@@ -1,5 +1,6 @@
 import hashlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -13,6 +14,9 @@ from app.schemas import (
     PromptVersion,
 )
 from app.sessions import ProjectMetadata
+
+if TYPE_CHECKING:  # critic importa este módulo: el import real sería circular
+    from app.services.critic import CriticFeedback
 
 _env = Environment(
     loader=FileSystemLoader(Path(__file__).parent),
@@ -34,6 +38,7 @@ def render_estimation_prompt(
     version: PromptVersion = PromptVersion.V1,
     project_metadata: ProjectMetadata | None = None,
     tier: str | None = None,
+    critic_feedback: "CriticFeedback | None" = None,
 ) -> tuple[str, str]:
     version = PromptVersion(version).value
     context = {
@@ -45,16 +50,25 @@ def render_estimation_prompt(
         "out_of_scope_prefix": OUT_OF_SCOPE_PREFIX,
         "low_confidence_threshold": LOW_CONFIDENCE_THRESHOLD,
         "project_metadata": (project_metadata or ProjectMetadata()).model_dump(),
-        "tier": str(tier) if tier else "default"
+        "tier": str(tier) if tier else "default",
     }
 
     system = _env.get_template(f"estimation/{version}/system.j2").render(context)
     user = _env.get_template(f"estimation/{version}/user.j2").render(context)
+    # el feedback del Critic (flujo ACB) va al final del user prompt, igual en todas las
+    # versiones: así v1 y v2 no se tocan y el prefijo cacheable del system no cambia
+    if critic_feedback is not None:
+        block = _env.get_template("estimation/_critic_feedback.j2").render(
+            feedback=critic_feedback.model_dump(mode="json")
+        )
+        user = f"{user}\n\n{block}"
 
     # Solo hashes y longitudes: el contenido incluye la descripción del cliente.
     log.info(
         "prompt_rendered",
         prompt_version=version,
+        tier=context["tier"],
+        with_critic_feedback=critic_feedback is not None,
         system_hash=_content_hash(system),
         user_hash=_content_hash(user),
         system_chars=len(system),
@@ -93,4 +107,21 @@ def render_conversation_summary_prompts(
     }
     system = _env.get_template(f"conversation_summary/{version}/system.j2").render(context)
     user = _env.get_template(f"conversation_summary/{version}/user.j2").render(context)
+    return system, user
+
+def render_critic_prompt(
+    transcript: str,
+    metadata: ProjectMetadata,
+    tier: str,
+    result: EstimationResult,
+    version: str = "v1",
+) -> tuple[str, str]:
+    context = {
+        "transcript": transcript,
+        "metadata": metadata.model_dump(),
+        "tier": str(tier),
+        "result": result,
+    }
+    system = _env.get_template(f"critic/{version}/system.j2").render(context)
+    user = _env.get_template(f"critic/{version}/user.j2").render(context)
     return system, user

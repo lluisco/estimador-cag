@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.schemas import EstimationResult, Phase
+from app.services.critic import CriticFeedback, Verdict
 from app.services.llm_service import get_llm_wrapper
 from app.services.llm_wrapper import LLMStructuredResponse
 from app.services.summarizer import ConversationSummary
@@ -45,6 +46,8 @@ class FakeLLMWrapper:
         self.summary_error: Exception | None = None
         self._summary_count = 0
         self.estimation_factory: Callable[[list[dict]], EstimationResult] = lambda _: make_canned_result()
+        self.critic_queue: list[CriticFeedback] = []
+        self.critic_error: Exception | None = None
 
     def complete_structured(
         self, *, response_model, system_prompt=None, user_message=None,
@@ -68,6 +71,14 @@ class FakeLLMWrapper:
                 raise self.summary_error
             self._summary_count += 1
             parsed = ConversationSummary(summary=f"RESUMEN-{self._summary_count}")
+        elif response_model is CriticFeedback:
+            if self.critic_error is not None:
+                raise self.critic_error
+            parsed = (
+                self.critic_queue.pop(0)
+                if self.critic_queue
+                else CriticFeedback(verdict=Verdict.ACCEPT, confidence_in_review=90)
+            )
         else:
             raise AssertionError(f"response_model inesperado: {response_model.__name__}")
 
