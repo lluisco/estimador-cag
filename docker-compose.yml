@@ -3,3 +3,26 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+
+  # Sesión 6: mapping table de pseudónimos + jobs de ingesta.
+  # La imagen trae pgvector compilado, pero la extensión queda dormida
+  # (sin CREATE EXTENSION vector) hasta la migración de la sesión 7.
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: estimator
+      POSTGRES_PASSWORD: estimator
+      POSTGRES_DB: estimator
+    ports:
+      # 5433 en el host para no chocar con un Postgres local en 5432.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "estimator", "-d", "estimator"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

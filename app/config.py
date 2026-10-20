@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,6 +50,19 @@ class Settings(BaseSettings):
     CRITIC_MODEL: str = "openai/gpt-4o-mini"
     # Iteraciones máximas del bucle ACB (cada una: 1 llamada al actor + 1 al critic).
     BOSS_MAX_ITERATIONS: int = 3
+
+    # --- Sesión 6: persistencia + ingesta + PII ---
+    # Postgres (pgvector/pgvector:pg16, puerto 5433 en el host). La extensión vector queda dormida hasta S07.
+    DATABASE_URL: str = "postgresql+psycopg://estimator:estimator@localhost:5433/estimator"
+    # Catálogo YAML de fuentes; se resuelve respecto al directorio de trabajo.
+    CATALOG_PATH: Path = Path("data/catalog/catalog.yaml")
+    # Raíz contra la que se resuelven los `location` del catálogo.
+    INGESTION_DATA_ROOT: Path = Path("data/seed")
+    # Modelo spaCy de Presidio. Sin el español, Presidio no detecta nombres hispanos y falla en silencio.
+    PRESIDIO_SPACY_MODEL: str = "es_core_news_md"
+    PSEUDONYM_FAKER_LOCALE: str = "es_ES"
+    # Sal del HMAC con el que se guarda el valor original en la mapping table. Cambiar en producción.
+    PSEUDONYM_HASH_SALT: str = "change-me-in-prod"
 
 
 settings = Settings()
