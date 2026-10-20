@@ -617,3 +617,15 @@ Para ejecutar los tests en local:
 uv sync --all-groups
 uv run pytest -v
 ```
+
+## Ingesta de datos (sesión 06)
+
+La sesión 06 añade el subsistema `app/ingestion/` (catálogo, parsers, limpieza, PII) y Postgres para los jobs y la
+mapping table de pseudónimos. Detalle, resultados y diferencias con la rama de clase en
+[docs/session-06-notes.md](docs/session-06-notes.md).
+
+```bash
+docker compose up -d postgres
+uv run alembic upgrade head
+uv run python scripts/preflight_s06.py
+```
