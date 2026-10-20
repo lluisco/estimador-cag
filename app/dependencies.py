@@ -10,6 +10,23 @@ from app.ingestion.loaders.filesystem import FileSystemLoader
 from app.ingestion.parsers.registry import ParserRegistry, default_registry
 
 
+def build_pseudonymizer(session):
+    """Pseudonimizador respaldado por Postgres.
+
+    No es singleton: la store envuelve una Session, así que scripts, BackgroundTasks
+    y tests aportan la suya. El analyzer sí es singleton y la sal sale de settings.
+    """
+    from app.ingestion.pii import ConsistentPseudonymizer, PostgresMappingStore, build_analyzer
+
+    return ConsistentPseudonymizer(
+        analyzer=build_analyzer(),
+        mapping_store=PostgresMappingStore(session),
+        salt=settings.PSEUDONYM_HASH_SALT,
+        faker_locale=settings.PSEUDONYM_FAKER_LOCALE,
+        language="es",
+    )
+
+
 @lru_cache
 def get_catalog() -> DataCatalog:
     """Carga y cachea el catálogo de fuentes.
