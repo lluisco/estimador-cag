@@ -629,3 +629,55 @@ docker compose up -d postgres
 uv run alembic upgrade head
 uv run python scripts/preflight_s06.py
 ```
+
+## Pipeline de embeddings (sesión 07)
+
+El módulo `app/embedding_pipeline/` convierte los presupuestos históricos (JSON normalizado) en vectores:
+
+- `chunker.py`: `JSONStructuralChunker`, un componente del presupuesto = un chunk, con la cabecera de contexto del
+  presupuesto padre. Sin overlap ni troceado de descripciones largas.
+- `embedder.py`: `OpenAIEmbedder` (`text-embedding-3-small`, 1536 dimensiones, lotes de 100, reintentos 1 s/2 s/4 s
+  ante `RateLimitError`). El precio por millón de tokens es una constante del módulo: cambia con el tiempo.
+- `router.py`: `POST /embeddings/ingest` (sin el prefijo `/api/v1`).
+
+Los vectores se generan en memoria y se devuelven por HTTP; la persistencia llega en la sesión 08. Resultados del
+sanity check en [app/embedding_pipeline/SANITY_CHECK.md](app/embedding_pipeline/SANITY_CHECK.md).
+
+### Arrancar el servicio
+
+Con Docker (servicio `servicio_ia`, necesita `OPENAI_API_KEY` en `.env`):
+
+```bash
+docker compose build servicio_ia
+docker compose up -d servicio_ia
+```
+
+O en local, sin contenedor: `uv run uvicorn app.main:app --reload`. En ambos casos queda en `http://localhost:8000`
+(Swagger en `/docs`). Tras `up -d`, uvicorn tarda unos segundos en responder.
+
+### Invocar el endpoint
+
+Desde Swagger (`/docs` > `POST /embeddings/ingest` > *Try it out*) o con curl, usando `data/budgets_sample.json`
+(15 presupuestos, 52 componentes):
+
+```bash
+python -c "import json; print(json.dumps({'budgets': json.load(open('data/budgets_sample.json', encoding='utf-8'))}))"   | curl -s -X POST localhost:8000/embeddings/ingest -H "Content-Type: application/json" -d @-   | python -c "import json,sys; print(json.load(sys.stdin)['stats'])"
+```
+
+Respuesta: `{"chunks": [...], "stats": {total_budgets, total_chunks, total_tokens, estimated_cost_usd}}`.
+422 si el body no valida (p. ej. un `sector` fuera de `finance|ecommerce|healthcare|industrial`) y 500 con mensaje
+genérico si falla la API de embeddings (el detalle va al log).
+
+### Comparar dos textos (`scripts/compare.py`)
+
+Similitud coseno entre dos textos, calculada a mano con la biblioteca estándar:
+
+```bash
+# Dentro del contenedor
+docker compose exec servicio_ia python scripts/compare.py   --text-a "OAuth 2.0 authentication backend for fintech"   --text-b "JWT-based authorization service for banking app"
+
+# Fuera del contenedor (con el .env cargado)
+uv run python scripts/compare.py   --text-a "OAuth 2.0 authentication backend for fintech"   --text-b "JWT-based authorization service for banking app"
+```
+
+Fuera del contenedor, ejecútalo desde la raíz del repo: `Settings` busca el `.env` en el directorio de trabajo.
