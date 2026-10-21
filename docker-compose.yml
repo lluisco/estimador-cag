@@ -24,5 +24,20 @@ services:
       timeout: 5s
       retries: 5
 
+  # Sesión 7: servicio IA (FastAPI). Lee el .env y apunta a redis/postgres por nombre de servicio.
+  servicio_ia:
+    build: .
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://estimator:estimator@postgres:5432/estimator
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
