@@ -8,3 +8,4 @@ evals/stress/fixtures/*.pdf
 # Ejecuciones intermedias del stress test (el entregable es results.csv)
 evals/stress/results_run*.csv
 evals/stress/dry_real.csv
+evals/stress/tables.md
