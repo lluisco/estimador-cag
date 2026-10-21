@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 # PDFs sinteticos del stress test (determinísticos: los regenera el runner)
 evals/stress/fixtures/*.pdf
+# Ejecuciones intermedias del stress test (el entregable es results.csv)
+evals/stress/results_run*.csv
+evals/stress/dry_real.csv
