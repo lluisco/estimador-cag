@@ -4,6 +4,7 @@ import structlog
 from fastapi import FastAPI, Request
 
 from app.config import settings
+from app.embedding_pipeline import router as embeddings_router
 from app.routers import estimations, ingestion, sessions
 
 
@@ -47,6 +48,8 @@ app = FastAPI(
 app.include_router(estimations.router, prefix="/api/v1")
 app.include_router(sessions.router, prefix="/api/v1")
 app.include_router(ingestion.router, prefix="/api/v1")
+# Sesión 7: ruta completa POST /embeddings/ingest (sin /api/v1, como fija el enunciado).
+app.include_router(embeddings_router.router)
 
 
 @app.middleware("http")

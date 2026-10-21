@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     PSEUDONYM_FAKER_LOCALE: str = "es_ES"
     # Sal del HMAC con el que se guarda el valor original en la mapping table. Cambiar en producción.
     PSEUDONYM_HASH_SALT: str = "change-me-in-prod"
+    # --- Sesión 7: pipeline de embeddings ---
+    # Dimensión por defecto (1536); recortarla (Matryoshka) se discute en el directo.
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
 
 
 settings = Settings()

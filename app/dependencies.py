@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from openai import OpenAI
+
 from app.config import settings
+from app.embedding_pipeline.chunker import JSONStructuralChunker
+from app.embedding_pipeline.embedder import OpenAIEmbedder
 from app.ingestion.catalog import DataCatalog, load_catalog
 from app.ingestion.loaders.filesystem import FileSystemLoader
 from app.ingestion.parsers.registry import ParserRegistry, default_registry
@@ -45,3 +49,19 @@ def get_filesystem_loader() -> FileSystemLoader:
 @lru_cache
 def get_parser_registry() -> ParserRegistry:
     return default_registry()
+
+
+@lru_cache
+def get_chunker() -> JSONStructuralChunker:
+    return JSONStructuralChunker()
+
+
+@lru_cache
+def get_embedder() -> OpenAIEmbedder | None:
+    """Embedder de la sesión 7; ``None`` si no hay OPENAI_API_KEY (el router responde 500)."""
+    if not settings.OPENAI_API_KEY:
+        return None
+    return OpenAIEmbedder(
+        client=OpenAI(api_key=settings.OPENAI_API_KEY),
+        model=settings.EMBEDDING_MODEL,
+    )
